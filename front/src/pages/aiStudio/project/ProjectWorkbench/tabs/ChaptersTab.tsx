@@ -7,6 +7,7 @@ import { StudioChaptersService } from '../../../../../services/generated'
 import { chapterStatusMap } from '../constants'
 import { getChapterPrepPath, getChapterStudioPath } from '../routes'
 import { useChapters, newId, type Chapter } from '../hooks/useProjectData'
+import { ChapterRawTextEditorModal } from '../../../chapter/components/ChapterRawTextEditorModal'
 
 const { TextArea } = Input
 const CREATE_PARAM = 'create'
@@ -19,7 +20,6 @@ export function ChaptersTab() {
 
   const [editOpen, setEditOpen] = useState(false)
   const [editingChapter, setEditingChapter] = useState<Chapter | null>(null)
-  const [editContent, setEditContent] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [createTitle, setCreateTitle] = useState('')
   const [createContent, setCreateContent] = useState('')
@@ -41,7 +41,6 @@ export function ChaptersTab() {
 
   const openEditModal = (chapter: Chapter) => {
     setEditingChapter(chapter)
-    setEditContent(chapter.rawText ?? '')
     setEditOpen(true)
   }
 
@@ -116,7 +115,7 @@ export function ChaptersTab() {
             size="small"
             onClick={() => projectId && navigate(getChapterPrepPath(projectId, record.id))}
           >
-            章节编辑
+            拍摄准备
           </Button>
           <Button
             type="link"
@@ -197,51 +196,20 @@ export function ChaptersTab() {
         size="small"
       />
 
-      <Modal
-        title={editingChapter ? `编辑章节：${editingChapter.title}` : '编辑章节'}
+      <ChapterRawTextEditorModal
         open={editOpen}
-        onCancel={() => {
+        onClose={() => {
           setEditOpen(false)
           setEditingChapter(null)
         }}
-        onOk={async () => {
-          if (!editingChapter) return
-          if (useMock) {
-            message.success('已保存（Mock）')
-            setEditOpen(false)
-            setEditingChapter(null)
-            return
+        chapterId={editingChapter?.id}
+        onSaved={(next) => {
+          if (editingChapter?.id && typeof next.rawText === 'string') {
+            patchChapterLocal(editingChapter.id, { rawText: next.rawText })
           }
-          try {
-            await StudioChaptersService.updateChapterApiV1StudioChaptersChapterIdPatch({
-              chapterId: editingChapter.id,
-              requestBody: {
-                raw_text: editContent,
-              },
-            })
-            patchChapterLocal(editingChapter.id, { rawText: editContent })
-            message.success('已保存')
-            setEditOpen(false)
-            setEditingChapter(null)
-            await refresh()
-          } catch {
-            message.error('保存失败')
-          }
+          void refresh()
         }}
-        okText="保存"
-        width={720}
-      >
-        <div>
-          <span className="text-gray-600 text-sm">原文</span>
-          <TextArea
-            rows={12}
-            value={editContent}
-            onChange={(e) => setEditContent(e.target.value)}
-            placeholder="章节原文内容"
-            className="mt-1 font-mono text-sm"
-          />
-        </div>
-      </Modal>
+      />
 
       <Modal
         title="新建章节"

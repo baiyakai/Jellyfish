@@ -5,37 +5,32 @@ import {
   Card,
   Collapse,
   Divider,
-  Dropdown,
   Empty,
   Checkbox,
   Input,
   Layout,
   List,
   Modal,
-  Select,
   Skeleton,
   Space,
+  Steps,
   Switch,
+  Table,
   Tag,
   Tabs,
   Tooltip,
   message,
 } from 'antd'
-import type { MenuProps } from 'antd'
+import type { TableColumnsType } from 'antd'
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
-  ClockCircleOutlined,
   DeleteOutlined,
-  DiffOutlined,
-  DownOutlined,
   EditOutlined,
   FileTextOutlined,
-  HistoryOutlined,
   MergeCellsOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
-  SaveOutlined,
   ThunderboltOutlined,
   VideoCameraOutlined,
 } from '@ant-design/icons'
@@ -43,6 +38,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { StudioChaptersService } from '../../../services/generated'
 import type { ChapterRead } from '../../../services/generated'
 import type { Chapter } from '../../../mocks/data'
+import { ChapterRawTextEditorModal } from './components/ChapterRawTextEditorModal'
 
 const { Header, Content } = Layout
 
@@ -87,6 +83,12 @@ type PropItem = {
   key: boolean
 }
 
+type SceneDraft = SceneItem & { description?: string; imageUrl?: string }
+type PropDraft = PropItem & { description?: string; imageUrl?: string }
+type RoleDraft = RoleItem & { imageUrl?: string }
+
+type StoryboardDraft = StoryboardSuggestion
+
 type ExtractResults = {
   storyboards: StoryboardSuggestion[]
   roles: RoleItem[]
@@ -119,13 +121,13 @@ function extractMock(text: string): ExtractResults {
     index: i + 1,
     title:
       i === 2 ? '两人对峙' :
-      i === 5 ? '门口停顿' :
-      `段落推进 · ${i + 1}`,
+        i === 5 ? '门口停顿' :
+          `段落推进 · ${i + 1}`,
     preview:
       i === 0 ? '夜色下的老旧小区，路灯昏黄，情绪压着。' :
-      i === 1 ? '出租屋内风扇吱呀作响，欠条摊在桌上。' :
-      i === 2 ? '沉默持续，目光交锋，谁也不肯先开口。' :
-      '对话推进，情绪起伏，动作带出关系变化。',
+        i === 1 ? '出租屋内风扇吱呀作响，欠条摊在桌上。' :
+          i === 2 ? '沉默持续，目光交锋，谁也不肯先开口。' :
+            '对话推进，情绪起伏，动作带出关系变化。',
     paragraphRange: `第${i * 2 + 1}–${i * 2 + 2}段`,
     duration: i % 3 === 0 ? '8–12秒' : '5–9秒',
     actions: i % 2 === 0 ? ['沉默', '转身'] : ['质问', '停顿'],
@@ -163,10 +165,6 @@ function extractMock(text: string): ExtractResults {
   return { storyboards, roles, scenes, props }
 }
 
-function isExtractKey(key: string): key is 'all' | ExtractKind {
-  return key === 'all' || key === 'storyboards' || key === 'roles' || key === 'scenes' || key === 'props'
-}
-
 function toUIChapter(c: ChapterRead): Chapter {
   return {
     id: c.id,
@@ -184,22 +182,16 @@ const ChapterPrep: React.FC = () => {
   const { projectId, chapterId } = useParams<{ projectId?: string; chapterId?: string }>()
   const navigate = useNavigate()
 
+  const [activeStep, setActiveStep] = useState(0)
+
   const [chapter, setChapter] = useState<Chapter | null>(null)
   const [titleEditing, setTitleEditing] = useState(false)
   const [titleValue, setTitleValue] = useState('')
 
-  type EditorMode = 'raw' | 'condensed' | 'compare'
-  const [mode, setMode] = useState<EditorMode>('raw')
   const [rawText, setRawText] = useState('')
-  const [condensedText, setCondensedText] = useState('')
-  const [editorText, setEditorText] = useState('')
-  const [compareRaw, setCompareRaw] = useState('')
-  const [compareCondensed, setCompareCondensed] = useState('')
-
-  const [saving, setSaving] = useState(false)
+  const [, setCondensedText] = useState('')
 
   const [editorModalOpen, setEditorModalOpen] = useState(false)
-  const [historyModalOpen, setHistoryModalOpen] = useState(false)
 
   const [extracting, setExtracting] = useState(false)
   const [results, setResults] = useState<ExtractResults>({ storyboards: [], roles: [], scenes: [], props: [] })
@@ -215,10 +207,42 @@ const ChapterPrep: React.FC = () => {
   const [selectedKind, setSelectedKind] = useState<ExtractKind>('storyboards')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  const [agent, setAgent] = useState<'default' | 'plot_v2' | 'role_v13'>('default')
+  const [sceneDrafts, setSceneDrafts] = useState<SceneDraft[]>([])
+  const [propDrafts, setPropDrafts] = useState<PropDraft[]>([])
+  const [roleDrafts, setRoleDrafts] = useState<RoleDraft[]>([])
+  const [storyboardDrafts, setStoryboardDrafts] = useState<StoryboardDraft[]>([])
 
-  const plainWordCount = useMemo(() => editorText.trim().length, [editorText])
-  const paragraphCount = useMemo(() => editorText.split(/\n\s*\n/).filter((p) => p.trim()).length, [editorText])
+  const [selectedSceneIds, setSelectedSceneIds] = useState<string[]>([])
+  const [selectedPropIds, setSelectedPropIds] = useState<string[]>([])
+  const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([])
+
+  const [editEntityOpen, setEditEntityOpen] = useState(false)
+  const [editEntityKind, setEditEntityKind] = useState<'scene' | 'prop' | 'role'>('scene')
+  const [editEntityId, setEditEntityId] = useState<string | null>(null)
+  const [editEntityName, setEditEntityName] = useState('')
+  const [editEntityDesc, setEditEntityDesc] = useState('')
+
+  const [addEntityOpen, setAddEntityOpen] = useState(false)
+  const [addEntityKind, setAddEntityKind] = useState<'scene' | 'prop' | 'role'>('scene')
+  const [addEntityName, setAddEntityName] = useState('')
+  const [addEntityDesc, setAddEntityDesc] = useState('')
+
+  const [pickFromAssetsOpen, setPickFromAssetsOpen] = useState(false)
+  const [pickFromAssetsKind, setPickFromAssetsKind] = useState<'scene' | 'prop' | 'role'>('scene')
+  const [pickFromAssetsSelected, setPickFromAssetsSelected] = useState<string[]>([])
+
+  const [editStoryboardOpen, setEditStoryboardOpen] = useState(false)
+  const [editingStoryboard, setEditingStoryboard] = useState<StoryboardDraft | null>(null)
+
+  const handleFinishPrep = () => {
+    if (!projectId) {
+      navigate('/projects')
+      return
+    }
+    navigate(`/projects/${projectId}?tab=chapters`)
+  }
+
+  // 预留：后续在 step 编辑区可展示字数/段落数
 
   useEffect(() => {
     if (!chapterId) return
@@ -237,14 +261,32 @@ const ChapterPrep: React.FC = () => {
         const nextCondensed = data.condensed_text ?? ''
         setRawText(nextRaw)
         setCondensedText(nextCondensed)
-        setMode('raw')
-        setEditorText(nextRaw)
         setResults(extractMock(nextRaw))
       })
       .catch(() => {
         setChapter(null)
       })
   }, [chapterId])
+
+  useEffect(() => {
+    // 将提取结果映射为各 step 的可编辑草稿（尽量保留用户编辑/生成状态）
+    setSceneDrafts((prev) => {
+      const prevMap = new Map(prev.map((x) => [x.id, x]))
+      return results.scenes.map((s) => ({ ...s, ...(prevMap.get(s.id) ?? {}) }))
+    })
+    setPropDrafts((prev) => {
+      const prevMap = new Map(prev.map((x) => [x.id, x]))
+      return results.props.map((p) => ({ ...p, ...(prevMap.get(p.id) ?? {}) }))
+    })
+    setRoleDrafts((prev) => {
+      const prevMap = new Map(prev.map((x) => [x.id, x]))
+      return results.roles.map((r) => ({ ...r, ...(prevMap.get(r.id) ?? {}) }))
+    })
+    setStoryboardDrafts((prev) => {
+      const prevMap = new Map(prev.map((x) => [x.id, x]))
+      return results.storyboards.map((sb) => ({ ...sb, ...(prevMap.get(sb.id) ?? {}) }))
+    })
+  }, [results.scenes, results.props, results.roles, results.storyboards])
 
   useEffect(() => {
     if (!projectId) return
@@ -273,53 +315,6 @@ const ChapterPrep: React.FC = () => {
   }, [projectId, existingEntities])
 
   // TODO: 后续可在此接入“章节草稿/版本历史”接口，替换掉当前预置数据与本地状态实现。
-
-  const handleSmartSimplify = async () => {
-    if (!rawText.trim()) {
-      message.warning('请先粘贴或输入原文')
-      return
-    }
-    setExtracting(true)
-    try {
-      // TODO: 智能精简接口未接入，后续在此替换为真实接口调用，并将返回结果写入 condensedText
-      await new Promise((r) => setTimeout(r, 500))
-      const simplified = '已精简'
-      setCondensedText(simplified)
-      if (mode === 'compare') {
-        // 对比模式下不切换编辑区：只更新右侧精简内容输入框
-        setCompareCondensed(simplified)
-      } else {
-        setMode('condensed')
-        setEditorText(simplified)
-      }
-      message.success('智能精简完成')
-    } finally {
-      setExtracting(false)
-    }
-  }
-
-  const handleBackToRaw = () => {
-    setMode('raw')
-    setEditorText(rawText)
-  }
-
-  const handleViewCondensed = () => {
-    if (!condensedText.trim()) {
-      message.info('暂无精简内容')
-      return
-    }
-    setMode('condensed')
-    setEditorText(condensedText)
-  }
-
-  const extractMenuItems: MenuProps['items'] = [
-    { key: 'all', label: '全选（分镜/角色/场景/道具）' },
-    { type: 'divider' },
-    { key: 'storyboards', label: '仅提取分镜建议' },
-    { key: 'roles', label: '仅提取角色' },
-    { key: 'scenes', label: '仅提取场景' },
-    { key: 'props', label: '仅提取道具' },
-  ]
 
   const runExtract = async (kind: 'all' | ExtractKind) => {
     if (!rawText.trim()) {
@@ -414,6 +409,179 @@ const ChapterPrep: React.FC = () => {
     setSelectedEntityKeys((prev) => ({ ...prev, [kind]: newOnes }))
   }
 
+  const openEditEntity = (kind: 'scene' | 'prop' | 'role', id: string) => {
+    setEditEntityKind(kind)
+    setEditEntityId(id)
+    if (kind === 'scene') {
+      const it = sceneDrafts.find((x) => x.id === id)
+      setEditEntityName(it?.name ?? '')
+      setEditEntityDesc(it?.description ?? '')
+    } else if (kind === 'prop') {
+      const it = propDrafts.find((x) => x.id === id)
+      setEditEntityName(it?.name ?? '')
+      setEditEntityDesc(it?.description ?? '')
+    } else {
+      const it = roleDrafts.find((x) => x.id === id)
+      setEditEntityName(it?.name ?? '')
+      setEditEntityDesc(it?.description ?? it?.description ?? '')
+    }
+    setEditEntityOpen(true)
+  }
+
+  const saveEditEntity = () => {
+    if (!editEntityId) return
+    if (editEntityKind === 'scene') {
+      setSceneDrafts((prev) =>
+        prev.map((x) => (x.id === editEntityId ? { ...x, name: editEntityName, description: editEntityDesc } : x)),
+      )
+    } else if (editEntityKind === 'prop') {
+      setPropDrafts((prev) =>
+        prev.map((x) => (x.id === editEntityId ? { ...x, name: editEntityName, description: editEntityDesc } : x)),
+      )
+    } else {
+      setRoleDrafts((prev) =>
+        prev.map((x) => (x.id === editEntityId ? { ...x, name: editEntityName, description: editEntityDesc } : x)),
+      )
+    }
+    setEditEntityOpen(false)
+    setEditEntityId(null)
+    message.success('已保存（Mock）')
+  }
+
+  const openAddEntity = (kind: 'scene' | 'prop' | 'role') => {
+    setAddEntityKind(kind)
+    setAddEntityName('')
+    setAddEntityDesc('')
+    setAddEntityOpen(true)
+  }
+
+  const addEntity = () => {
+    if (!addEntityName.trim()) {
+      message.warning('请输入名称')
+      return
+    }
+    const id = `${addEntityKind}-${Date.now()}`
+    if (addEntityKind === 'scene') {
+      setSceneDrafts((prev) => [
+        ...prev,
+        {
+          id,
+          name: addEntityName.trim(),
+          indoorOutdoor: '未知' as const,
+          time: '未知' as const,
+          keywords: [] as string[],
+          description: addEntityDesc,
+        },
+      ])
+    } else if (addEntityKind === 'prop') {
+      setPropDrafts((prev) => [
+        ...prev,
+        { id, name: addEntityName.trim(), count: 1, key: false, description: addEntityDesc },
+      ])
+    } else {
+      setRoleDrafts((prev) => [
+        ...prev,
+        {
+          id,
+          name: addEntityName.trim(),
+          aliases: [],
+          firstSeen: '',
+          description: addEntityDesc,
+          primary: true,
+        },
+      ])
+    }
+    setAddEntityOpen(false)
+    message.success('已添加（Mock）')
+  }
+
+  const openPickFromAssets = (kind: 'scene' | 'prop' | 'role') => {
+    setPickFromAssetsKind(kind)
+    setPickFromAssetsSelected([])
+    setPickFromAssetsOpen(true)
+  }
+
+  const confirmPickFromAssets = () => {
+    if (pickFromAssetsSelected.length === 0) {
+      message.info('请先选择要添加的内容')
+      return
+    }
+    if (pickFromAssetsKind === 'scene') {
+      setSceneDrafts((prev) => [
+        ...prev,
+        ...pickFromAssetsSelected.map((name) => ({
+          id: `asset-scene-${name}`,
+          name,
+          indoorOutdoor: '未知' as const,
+          time: '未知' as const,
+          keywords: [] as string[],
+          description: '来自资产库（Mock）',
+        })),
+      ])
+    } else if (pickFromAssetsKind === 'prop') {
+      setPropDrafts((prev) => [
+        ...prev,
+        ...pickFromAssetsSelected.map((name) => ({
+          id: `asset-prop-${name}`,
+          name,
+          count: 1,
+          key: false,
+          description: '来自资产库（Mock）',
+        })),
+      ])
+    } else {
+      setRoleDrafts((prev) => [
+        ...prev,
+        ...pickFromAssetsSelected.map((name) => ({
+          id: `asset-role-${name}`,
+          name,
+          aliases: [],
+          firstSeen: '',
+          description: '来自资产库（Mock）',
+          primary: true,
+        })),
+      ])
+    }
+    setPickFromAssetsOpen(false)
+    message.success('已从资产库添加（Mock）')
+  }
+
+  const generateImages = (kind: 'scene' | 'prop' | 'role') => {
+    const stamp = Date.now()
+    const url = `mock://generated/${kind}/${stamp}`
+    if (kind === 'scene') {
+      setSceneDrafts((prev) =>
+        prev.map((x) => (selectedSceneIds.includes(x.id) ? { ...x, imageUrl: url } : x)),
+      )
+      message.success('已生成场景图片（Mock）')
+      return
+    }
+    if (kind === 'prop') {
+      setPropDrafts((prev) =>
+        prev.map((x) => (selectedPropIds.includes(x.id) ? { ...x, imageUrl: url } : x)),
+      )
+      message.success('已生成道具图片（Mock）')
+      return
+    }
+    setRoleDrafts((prev) =>
+      prev.map((x) => (selectedRoleIds.includes(x.id) ? { ...x, imageUrl: url } : x)),
+    )
+    message.success('已生成角色图片（Mock）')
+  }
+
+  const openEditStoryboard = (sb: StoryboardDraft) => {
+    setEditingStoryboard(sb)
+    setEditStoryboardOpen(true)
+  }
+
+  const saveStoryboard = () => {
+    if (!editingStoryboard) return
+    setStoryboardDrafts((prev) => prev.map((x) => (x.id === editingStoryboard.id ? editingStoryboard : x)))
+    setEditStoryboardOpen(false)
+    setEditingStoryboard(null)
+    message.success('已保存分镜（Mock）')
+  }
+
   const currentItemsCount = useMemo(() => {
     return {
       storyboards: results.storyboards.length,
@@ -442,95 +610,6 @@ const ChapterPrep: React.FC = () => {
     () => results.props.find((x) => x.id === selectedId) ?? null,
     [results.props, selectedId],
   )
-
-  const handleJumpStudio = () => {
-    if (!projectId || !chapterId) return
-    Modal.confirm({
-      title: '跳转到拍摄工作台？',
-      content: '建议先完成提取与确认。是否将当前提取结果带入拍摄页（Mock）？',
-      okText: '带入并跳转',
-      cancelText: '仅跳转',
-      onOk: () => {
-        navigate(`/projects/${projectId}/chapters/${chapterId}/studio`, {
-          state: { prep: results },
-        })
-      },
-      onCancel: () => {
-        navigate(`/projects/${projectId}/chapters/${chapterId}/studio`)
-      },
-    })
-  }
-
-  const mockHistory = useMemo(
-    () => [
-      {
-        id: 'h-1',
-        at: Date.now() - 1000 * 60 * 60 * 2,
-        rawText: '【原文】示例版本 1（预置数据）',
-        condensedText: '【精简】示例版本 1（预置数据）',
-      },
-      {
-        id: 'h-2',
-        at: Date.now() - 1000 * 60 * 22,
-        rawText: '【原文】示例版本 2（预置数据）',
-        condensedText: '【精简】示例版本 2（预置数据）',
-      },
-    ],
-    [],
-  )
-
-  const handleSaveEditor = async () => {
-    if (!chapterId) return
-    if (mode === 'raw') {
-      setSaving(true)
-      try {
-        await StudioChaptersService.updateChapterApiV1StudioChaptersChapterIdPatch({
-          chapterId,
-          requestBody: { raw_text: editorText },
-        })
-        setRawText(editorText)
-        message.success('原文已保存')
-      } catch {
-        message.error('保存失败')
-      } finally {
-        setSaving(false)
-      }
-      return
-    }
-
-    if (mode === 'condensed') {
-      setSaving(true)
-      try {
-        await StudioChaptersService.updateChapterApiV1StudioChaptersChapterIdPatch({
-          chapterId,
-          requestBody: { condensed_text: editorText },
-        })
-        setCondensedText(editorText)
-        message.success('精简内容已保存')
-      } catch {
-        message.error('保存失败')
-      } finally {
-        setSaving(false)
-      }
-      return
-    }
-
-    // compare
-    setSaving(true)
-    try {
-      await StudioChaptersService.updateChapterApiV1StudioChaptersChapterIdPatch({
-        chapterId,
-        requestBody: { raw_text: compareRaw, condensed_text: compareCondensed },
-      })
-      setRawText(compareRaw)
-      setCondensedText(compareCondensed)
-      message.success('已保存')
-    } catch {
-      message.error('保存失败')
-    } finally {
-      setSaving(false)
-    }
-  }
 
   return (
     <Layout style={{ height: '100%', minHeight: 0, background: '#eef2f7' }}>
@@ -579,59 +658,9 @@ const ChapterPrep: React.FC = () => {
             </div>
           )}
           <div className="text-xs text-gray-500 flex items-center gap-1">
-            {saving ? (
-              <>
-                <ClockCircleOutlined /> 自动保存中…
-              </>
-            ) : (
-              <>
-                <CheckCircleOutlined /> 已保存
-              </>
-            )}
+            <CheckCircleOutlined /> 已加载
           </div>
         </div>
-
-        <Space>
-          <Button icon={<FileTextOutlined />} onClick={() => setEditorModalOpen(true)}>
-            编辑原文
-          </Button>
-          <Button icon={<SaveOutlined />} type="primary" onClick={() => message.success('已保存草稿（Mock）')}>
-            保存草稿
-          </Button>
-
-          <Dropdown
-            menu={{
-              items: extractMenuItems,
-              onClick: ({ key }) => {
-                const k = String(key)
-                if (isExtractKey(k)) {
-                  void runExtract(k)
-                }
-              },
-            }}
-          >
-            <Button loading={extracting} icon={<ThunderboltOutlined />}>
-              一键提取全部 <DownOutlined />
-            </Button>
-          </Dropdown>
-
-          <Select
-            value={agent}
-            onChange={(v) => setAgent(v)}
-            style={{ width: 180 }}
-            options={[
-              { value: 'default', label: '使用默认 Agent' },
-              { value: 'plot_v2', label: '剧情提取 Agent v2' },
-              { value: 'role_v13', label: '角色提取 Agent v1.3' },
-            ]}
-          />
-
-          <Tooltip title="建议先完成提取与确认">
-            <Button type="primary" icon={<VideoCameraOutlined />} onClick={handleJumpStudio} style={{ background: '#10b981', borderColor: '#10b981' }}>
-              跳转拍摄
-            </Button>
-          </Tooltip>
-        </Space>
       </Header>
 
       <Content
@@ -643,452 +672,651 @@ const ChapterPrep: React.FC = () => {
           flexDirection: 'column',
         }}
       >
-        {/* 左导航 + 右详情 */}
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12, overflow: 'hidden' }}>
-          {/* 左侧导航 */}
-          <Card
-            style={{ width: 340, minWidth: 280, maxWidth: 420, height: '100%', overflow: 'hidden', flexShrink: 0 }}
-            bodyStyle={{ padding: 12, height: '100%', minHeight: 0, overflow: 'auto' }}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="font-medium">提取结果导航</div>
-              <Badge status={extracting ? 'processing' : 'success'} text={extracting ? '提取中…' : '就绪'} />
-            </div>
-            <Collapse
-              defaultActiveKey={['storyboards']}
+        <Card size="small" className="mb-3">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <Steps
+              current={activeStep}
+              onChange={setActiveStep}
+              className="flex-1 min-w-[520px]"
               items={[
-                {
-                  key: 'storyboards',
-                  label: `原文分镜建议（${currentItemsCount.storyboards}）`,
-                  extra: (
-                    <Space size="small">
-                      <Tooltip title="重新提取">
-                        <Button size="small" type="text" icon={<ReloadOutlined />} onClick={() => void runExtract('storyboards')} />
-                      </Tooltip>
-                    </Space>
-                  ),
-                  children: extracting ? (
-                    <Skeleton active paragraph={{ rows: 4 }} />
-                  ) : (
-                    <List
-                      size="small"
-                      dataSource={results.storyboards}
-                      locale={{ emptyText: <Empty description="暂无分镜建议" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-                      renderItem={(it) => (
-                        <List.Item
-                          onClick={() => {
-                            setSelectedKind('storyboards')
-                            setSelectedId(it.id)
-                          }}
-                          style={{
-                            cursor: 'pointer',
-                            borderRadius: 10,
-                            padding: '8px 10px',
-                            background: selectedKind === 'storyboards' && selectedId === it.id ? 'rgba(59,130,246,0.10)' : undefined,
-                          }}
-                        >
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium truncate">
-                              {String(it.index).padStart(2, '0')} · {it.title}
-                            </div>
-                            <div className="text-xs text-gray-500 truncate">{it.preview}</div>
-                          </div>
-                        </List.Item>
-                      )}
-                    />
-                  ),
-                },
-                {
-                  key: 'roles',
-                  label: `角色（${currentItemsCount.roles}）`,
-                  children: extracting ? (
-                    <Skeleton active paragraph={{ rows: 3 }} />
-                  ) : (
-                    <List
-                      size="small"
-                      dataSource={results.roles}
-                      locale={{ emptyText: <Empty description="暂无角色" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-                      renderItem={(it) => (
-                        <List.Item
-                          onClick={() => {
-                            setSelectedKind('roles')
-                            setSelectedId(it.id)
-                          }}
-                          style={{
-                            cursor: 'pointer',
-                            borderRadius: 10,
-                            padding: '8px 10px',
-                            background: selectedKind === 'roles' && selectedId === it.id ? 'rgba(59,130,246,0.10)' : undefined,
-                          }}
-                        >
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium truncate">{it.name}</div>
-                            <div className="text-xs text-gray-500 truncate">{it.description}</div>
-                          </div>
-                        </List.Item>
-                      )}
-                    />
-                  ),
-                },
-                {
-                  key: 'scenes',
-                  label: `场景（${currentItemsCount.scenes}）`,
-                  children: extracting ? (
-                    <Skeleton active paragraph={{ rows: 3 }} />
-                  ) : (
-                    <List
-                      size="small"
-                      dataSource={results.scenes}
-                      locale={{ emptyText: <Empty description="暂无场景" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-                      renderItem={(it) => (
-                        <List.Item
-                          onClick={() => {
-                            setSelectedKind('scenes')
-                            setSelectedId(it.id)
-                          }}
-                          style={{
-                            cursor: 'pointer',
-                            borderRadius: 10,
-                            padding: '8px 10px',
-                            background: selectedKind === 'scenes' && selectedId === it.id ? 'rgba(59,130,246,0.10)' : undefined,
-                          }}
-                        >
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium truncate">{it.name}</div>
-                            <div className="text-xs text-gray-500 truncate">{it.indoorOutdoor} · {it.time}</div>
-                          </div>
-                        </List.Item>
-                      )}
-                    />
-                  ),
-                },
-                {
-                  key: 'props',
-                  label: `道具（${currentItemsCount.props}）`,
-                  children: extracting ? (
-                    <Skeleton active paragraph={{ rows: 3 }} />
-                  ) : (
-                    <List
-                      size="small"
-                      dataSource={results.props}
-                      locale={{ emptyText: <Empty description="暂无道具" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-                      renderItem={(it) => (
-                        <List.Item
-                          onClick={() => {
-                            setSelectedKind('props')
-                            setSelectedId(it.id)
-                          }}
-                          style={{
-                            cursor: 'pointer',
-                            borderRadius: 10,
-                            padding: '8px 10px',
-                            background: selectedKind === 'props' && selectedId === it.id ? 'rgba(59,130,246,0.10)' : undefined,
-                          }}
-                        >
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium truncate">{it.name}</div>
-                            <div className="text-xs text-gray-500 truncate">出现 {it.count} 次{it.key ? ' · 关键道具' : ''}</div>
-                          </div>
-                        </List.Item>
-                      )}
-                    />
-                  ),
-                },
+                { title: '智能提取' },
+                { title: '场景生成' },
+                { title: '道具生成' },
+                { title: '角色生成' },
+                { title: '分镜预览' },
               ]}
             />
-          </Card>
-
-          {/* 右侧详情 */}
-          <Card style={{ flex: 1, minWidth: 0, height: '100%', overflow: 'hidden' }} bodyStyle={{ padding: 12, height: '100%', minHeight: 0, overflow: 'auto' }}>
-            {selectedKind === 'storyboards' && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="font-medium">分镜建议</div>
-                  <Space>
-                    <Button icon={<MergeCellsOutlined />}>批量操作（Mock）</Button>
-                    <Button icon={<PlayCircleOutlined />}>预览（Mock）</Button>
-                  </Space>
-                </div>
-                {selectedStoryboard ? (
-                  <Card size="small">
-                    <div className="text-base font-semibold">
-                      {String(selectedStoryboard.index).padStart(2, '0')} · {selectedStoryboard.title}
-                      {selectedStoryboard.isTransition && <Tag color="purple" className="ml-2">转场点</Tag>}
-                    </div>
-                    <Divider />
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      <div><span className="text-gray-500">原文段落：</span>{selectedStoryboard.paragraphRange}</div>
-                      <div><span className="text-gray-500">建议时长：</span>{selectedStoryboard.duration}</div>
-                      <div><span className="text-gray-500">关键动作：</span>{selectedStoryboard.actions.join('、')}</div>
-                      <div><span className="text-gray-500">涉及角色：</span>{selectedStoryboard.roles.join('、')}</div>
-                      <div><span className="text-gray-500">涉及场景：</span>{selectedStoryboard.scenes.join('、')}</div>
-                      <div><span className="text-gray-500">涉及道具：</span>{selectedStoryboard.props.join('、')}</div>
-                    </div>
-                    <Divider />
-                    <Space wrap>
-                      <Button icon={<EditOutlined />}>编辑标题（Mock）</Button>
-                      <Button icon={<MergeCellsOutlined />}>合并到上一条（Mock）</Button>
-                      <Button icon={<DeleteOutlined />} danger>删除（Mock）</Button>
-                      <Button icon={<VideoCameraOutlined />}>标记为转场（Mock）</Button>
-                    </Space>
-                  </Card>
-                ) : (
-                  <Empty description="请从左侧选择一条分镜建议" />
-                )}
-              </div>
-            )}
-
-            {selectedKind === 'roles' && (
-              <div className="space-y-3">
-                <div className="font-medium">角色</div>
-                {selectedRole ? (
-                  <Card size="small">
-                    <div className="flex items-center justify-between">
-                      <div className="text-base font-semibold">{selectedRole.name}</div>
-                      <Space>
-                        <span className="text-sm text-gray-500">主要角色</span>
-                        <Switch checked={selectedRole.primary} />
-                      </Space>
-                    </div>
-                    <div className="text-sm text-gray-500 mt-1">首次出现：{selectedRole.firstSeen}</div>
-                    <Divider />
-                    <div className="text-sm">{selectedRole.description}</div>
-                    <div className="mt-2">
-                      {selectedRole.aliases.map((a) => (
-                        <Tag key={a}>{a}</Tag>
-                      ))}
-                    </div>
-                    <Divider />
-                    <Space wrap>
-                      <Button>关联资产库角色（Mock）</Button>
-                      <Button type="primary">创建新角色资产（Mock）</Button>
-                      <Button danger icon={<DeleteOutlined />}>删除（Mock）</Button>
-                    </Space>
-                  </Card>
-                ) : (
-                  <Empty description="请从左侧选择一个角色" />
-                )}
-              </div>
-            )}
-
-            {selectedKind === 'scenes' && (
-              <div className="space-y-3">
-                <div className="font-medium">场景</div>
-                {selectedScene ? (
-                  <Card size="small">
-                    <div className="text-base font-semibold">{selectedScene.name}</div>
-                    <div className="text-sm text-gray-500 mt-1">{selectedScene.indoorOutdoor} · {selectedScene.time}</div>
-                    <Divider />
-                    <div className="flex flex-wrap gap-2">
-                      {selectedScene.keywords.map((k) => <Tag key={k} color="blue">{k}</Tag>)}
-                    </div>
-                    <Divider />
-                    <Space wrap>
-                      <Button>关联资产库场景（Mock）</Button>
-                      <Button type="primary">创建新场景资产（Mock）</Button>
-                      <Button danger icon={<DeleteOutlined />}>删除（Mock）</Button>
-                    </Space>
-                  </Card>
-                ) : (
-                  <Empty description="请从左侧选择一个场景" />
-                )}
-              </div>
-            )}
-
-            {selectedKind === 'props' && (
-              <div className="space-y-3">
-                <div className="font-medium">道具</div>
-                {selectedProp ? (
-                  <Card size="small">
-                    <div className="flex items-center gap-2">
-                      <div className="text-base font-semibold">{selectedProp.name}</div>
-                      {selectedProp.key && <Tag color="gold">关键道具</Tag>}
-                    </div>
-                    <div className="text-sm text-gray-500 mt-1">出现次数：{selectedProp.count}</div>
-                    <Divider />
-                    <Space wrap>
-                      <Button>关联资产库道具（Mock）</Button>
-                      <Button type="primary">创建新道具资产（Mock）</Button>
-                      <Button danger icon={<DeleteOutlined />}>删除（Mock）</Button>
-                    </Space>
-                  </Card>
-                ) : (
-                  <Empty description="请从左侧选择一个道具" />
-                )}
-              </div>
-            )}
-          </Card>
-        </div>
-      </Content>
-
-      {/* 编辑原文弹窗 */}
-      <Modal
-        title={
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex items-center gap-2">
-              <FileTextOutlined />{' '}
-              {mode === 'raw'
-                ? '原文编辑区'
-                : mode === 'condensed'
-                  ? '精简内容编辑区'
-                  : '对比模式'}
-              <Tag color="blue">{plainWordCount} 字</Tag>
-              <Tag color="default">{paragraphCount} 段</Tag>
-            </div>
-            <Space size="small">
-              <Button
-                size="small"
-                type="primary"
-                icon={<SaveOutlined />}
-                loading={saving}
-                onClick={() => void handleSaveEditor()}
-              >
-                保存
-              </Button>
-              <Button size="small" icon={<ThunderboltOutlined />} loading={extracting} onClick={() => void handleSmartSimplify()}>
-                智能精简
-              </Button>
-              {mode === 'condensed' ? (
-                <Button size="small" icon={<ReloadOutlined />} onClick={handleBackToRaw}>
-                  回到原文
-                </Button>
-              ) : (
-                <Button
-                  size="small"
-                  icon={<ReloadOutlined />}
-                  disabled={!condensedText.trim()}
-                  onClick={handleViewCondensed}
-                >
-                  查看精简
+            <Space>
+              {activeStep > 0 && (
+                <Button onClick={() => setActiveStep((s) => Math.max(0, s - 1))}>
+                  上一步：{['智能提取', '场景生成', '道具生成', '角色生成', '分镜预览'][activeStep - 1]}
                 </Button>
               )}
-              <Button
-                size="small"
-                icon={<DiffOutlined />}
-                type={mode === 'compare' ? 'primary' : 'default'}
-                onClick={() => {
-                  if (mode === 'compare') {
-                    setMode('raw')
-                    setEditorText(rawText)
-                    return
-                  }
-                  setCompareRaw(rawText)
-                  setCompareCondensed(condensedText)
-                  setMode('compare')
-                }}
-              >
-                对比模式
-              </Button>
-              <Button size="small" icon={<HistoryOutlined />} onClick={() => setHistoryModalOpen(true)}>
-                版本历史
-              </Button>
+              {activeStep < 4 ? (
+                <Button type="primary" onClick={() => setActiveStep((s) => Math.min(4, s + 1))}>
+                  下一步：{['智能提取', '场景生成', '道具生成', '角色生成', '分镜预览'][activeStep + 1]}
+                </Button>
+              ) : (
+                <Button type="primary" onClick={handleFinishPrep}>
+                  准备结束
+                </Button>
+              )}
             </Space>
           </div>
-        }
-        open={editorModalOpen}
-        onCancel={() => setEditorModalOpen(false)}
-        width={900}
-        footer={
-          <Button type="primary" onClick={() => setEditorModalOpen(false)}>
-            关闭
-          </Button>
-        }
-        styles={{ body: { maxHeight: '70vh', overflow: 'auto', paddingTop: 12 } }}
-      >
-        {mode === 'compare' ? (
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col">
-              <div className="text-xs text-gray-500 mb-2">原文</div>
-              <Input.TextArea
-                value={compareRaw}
-                onChange={(e) => setCompareRaw(e.target.value)}
-                rows={14}
-                style={{ resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}
-              />
-            </div>
-            <div className="flex flex-col">
-              <div className="text-xs text-gray-500 mb-2">精简内容</div>
-              <Input.TextArea
-                value={compareCondensed}
-                onChange={(e) => setCompareCondensed(e.target.value)}
-                rows={14}
-                style={{ resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}
-              />
-            </div>
-          </div>
-        ) : (
-          <Input.TextArea
-            value={editorText}
-            onChange={(e) => {
-              const v = e.target.value
-              setEditorText(v)
-              if (mode === 'raw') setRawText(v)
-              if (mode === 'condensed') setCondensedText(v)
-            }}
-            placeholder={mode === 'raw' ? '编辑章节原文…' : '编辑精简内容…'}
-            rows={16}
-            style={{ resize: 'none', background: '#fdfdfd' }}
-          />
-        )}
-      </Modal>
+        </Card>
 
-      {/* 历史版本（Mock） */}
-      <Modal
-        title={
-          <div className="flex items-center gap-2">
-            <HistoryOutlined /> 历史版本
-          </div>
-        }
-        open={historyModalOpen}
-        onCancel={() => setHistoryModalOpen(false)}
-        width={920}
-        footer={
-          <Button type="primary" onClick={() => setHistoryModalOpen(false)}>
-            关闭
-          </Button>
-        }
-        styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
-      >
-        {/* TODO: 历史版本接口未接入，当前为预置数据；后续接入后按时间线渲染即可 */}
-        <div className="text-xs text-gray-500 mb-3">内容默认折叠，仅展示时间线节点。</div>
-        <div className="space-y-3">
-          {mockHistory.map((h) => (
-            <div key={h.id} className="border border-gray-200 rounded-lg p-3 bg-white">
-              <div className="text-sm font-medium mb-2">{new Date(h.at).toLocaleString()}</div>
-              <Collapse
-                items={[
-                  {
-                    key: 'content',
-                    label: '展开查看内容',
-                    children: (
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <div className="text-xs text-gray-500 mb-2">原文内容</div>
-                          <Input.TextArea
-                            value={h.rawText}
-                            readOnly
-                            rows={8}
-                            style={{ resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}
-                          />
+        {activeStep === 0 && (
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, overflow: 'hidden' }}>
+            <Card size="small">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <Space>
+                  <Button icon={<FileTextOutlined />} onClick={() => setEditorModalOpen(true)}>
+                    编辑原文
+                  </Button>
+                  <Button type="primary" loading={extracting} icon={<ThunderboltOutlined />} onClick={() => void runExtract('all')}>
+                    一键提取全部
+                  </Button>
+                  <span className="text-xs text-gray-500">
+                    {currentItemsCount.roles + currentItemsCount.scenes + currentItemsCount.props > 0 ? '已提取，可重新提取' : '尚未提取'}
+                  </span>
+                </Space>
+              </div>
+            </Card>
+
+            {/* 左导航 + 右详情 */}
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12, overflow: 'hidden' }}>
+              {/* 左侧导航 */}
+              <Card
+                style={{ width: 340, minWidth: 280, maxWidth: 420, height: '100%', overflow: 'hidden', flexShrink: 0 }}
+                bodyStyle={{ padding: 12, height: '100%', minHeight: 0, overflow: 'auto' }}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-medium">提取结果导航</div>
+                  <Badge status={extracting ? 'processing' : 'success'} text={extracting ? '提取中…' : '就绪'} />
+                </div>
+                <Collapse
+                  defaultActiveKey={['storyboards']}
+                  items={[
+                    {
+                      key: 'storyboards',
+                      label: `原文分镜建议（${currentItemsCount.storyboards}）`,
+                      extra: (
+                        <Space size="small">
+                          <Tooltip title="重新提取">
+                            <Button size="small" type="text" icon={<ReloadOutlined />} onClick={() => void runExtract('storyboards')} />
+                          </Tooltip>
+                        </Space>
+                      ),
+                      children: extracting ? (
+                        <Skeleton active paragraph={{ rows: 4 }} />
+                      ) : (
+                        <List
+                          size="small"
+                          dataSource={results.storyboards}
+                          locale={{ emptyText: <Empty description="暂无分镜建议" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+                          renderItem={(it) => (
+                            <List.Item
+                              onClick={() => {
+                                setSelectedKind('storyboards')
+                                setSelectedId(it.id)
+                              }}
+                              style={{
+                                cursor: 'pointer',
+                                borderRadius: 10,
+                                padding: '8px 10px',
+                                background: selectedKind === 'storyboards' && selectedId === it.id ? 'rgba(59,130,246,0.10)' : undefined,
+                              }}
+                            >
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium truncate">
+                                  {String(it.index).padStart(2, '0')} · {it.title}
+                                </div>
+                                <div className="text-xs text-gray-500 truncate">{it.preview}</div>
+                              </div>
+                            </List.Item>
+                          )}
+                        />
+                      ),
+                    },
+                    {
+                      key: 'roles',
+                      label: `角色（${currentItemsCount.roles}）`,
+                      children: extracting ? (
+                        <Skeleton active paragraph={{ rows: 3 }} />
+                      ) : (
+                        <List
+                          size="small"
+                          dataSource={results.roles}
+                          locale={{ emptyText: <Empty description="暂无角色" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+                          renderItem={(it) => (
+                            <List.Item
+                              onClick={() => {
+                                setSelectedKind('roles')
+                                setSelectedId(it.id)
+                              }}
+                              style={{
+                                cursor: 'pointer',
+                                borderRadius: 10,
+                                padding: '8px 10px',
+                                background: selectedKind === 'roles' && selectedId === it.id ? 'rgba(59,130,246,0.10)' : undefined,
+                              }}
+                            >
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium truncate">{it.name}</div>
+                                <div className="text-xs text-gray-500 truncate">{it.description}</div>
+                              </div>
+                            </List.Item>
+                          )}
+                        />
+                      ),
+                    },
+                    {
+                      key: 'scenes',
+                      label: `场景（${currentItemsCount.scenes}）`,
+                      children: extracting ? (
+                        <Skeleton active paragraph={{ rows: 3 }} />
+                      ) : (
+                        <List
+                          size="small"
+                          dataSource={results.scenes}
+                          locale={{ emptyText: <Empty description="暂无场景" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+                          renderItem={(it) => (
+                            <List.Item
+                              onClick={() => {
+                                setSelectedKind('scenes')
+                                setSelectedId(it.id)
+                              }}
+                              style={{
+                                cursor: 'pointer',
+                                borderRadius: 10,
+                                padding: '8px 10px',
+                                background: selectedKind === 'scenes' && selectedId === it.id ? 'rgba(59,130,246,0.10)' : undefined,
+                              }}
+                            >
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium truncate">{it.name}</div>
+                                <div className="text-xs text-gray-500 truncate">{it.indoorOutdoor} · {it.time}</div>
+                              </div>
+                            </List.Item>
+                          )}
+                        />
+                      ),
+                    },
+                    {
+                      key: 'props',
+                      label: `道具（${currentItemsCount.props}）`,
+                      children: extracting ? (
+                        <Skeleton active paragraph={{ rows: 3 }} />
+                      ) : (
+                        <List
+                          size="small"
+                          dataSource={results.props}
+                          locale={{ emptyText: <Empty description="暂无道具" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+                          renderItem={(it) => (
+                            <List.Item
+                              onClick={() => {
+                                setSelectedKind('props')
+                                setSelectedId(it.id)
+                              }}
+                              style={{
+                                cursor: 'pointer',
+                                borderRadius: 10,
+                                padding: '8px 10px',
+                                background: selectedKind === 'props' && selectedId === it.id ? 'rgba(59,130,246,0.10)' : undefined,
+                              }}
+                            >
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium truncate">{it.name}</div>
+                                <div className="text-xs text-gray-500 truncate">出现 {it.count} 次{it.key ? ' · 关键道具' : ''}</div>
+                              </div>
+                            </List.Item>
+                          )}
+                        />
+                      ),
+                    },
+                  ]}
+                />
+              </Card>
+
+              {/* 右侧详情 */}
+              <Card style={{ flex: 1, minWidth: 0, height: '100%', overflow: 'hidden' }} bodyStyle={{ padding: 12, height: '100%', minHeight: 0, overflow: 'auto' }}>
+                {selectedKind === 'storyboards' && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium">分镜建议</div>
+                      <Space>
+                        <Button icon={<MergeCellsOutlined />}>批量操作（Mock）</Button>
+                        <Button icon={<PlayCircleOutlined />}>预览（Mock）</Button>
+                      </Space>
+                    </div>
+                    {selectedStoryboard ? (
+                      <Card size="small">
+                        <div className="text-base font-semibold">
+                          {String(selectedStoryboard.index).padStart(2, '0')} · {selectedStoryboard.title}
+                          {selectedStoryboard.isTransition && <Tag color="purple" className="ml-2">转场点</Tag>}
                         </div>
-                        <div>
-                          <div className="text-xs text-gray-500 mb-2">精简内容</div>
-                          <Input.TextArea
-                            value={h.condensedText}
-                            readOnly
-                            rows={8}
-                            style={{ resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}
-                          />
+                        <Divider />
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div><span className="text-gray-500">原文段落：</span>{selectedStoryboard.paragraphRange}</div>
+                          <div><span className="text-gray-500">建议时长：</span>{selectedStoryboard.duration}</div>
+                          <div><span className="text-gray-500">关键动作：</span>{selectedStoryboard.actions.join('、')}</div>
+                          <div><span className="text-gray-500">涉及角色：</span>{selectedStoryboard.roles.join('、')}</div>
+                          <div><span className="text-gray-500">涉及场景：</span>{selectedStoryboard.scenes.join('、')}</div>
+                          <div><span className="text-gray-500">涉及道具：</span>{selectedStoryboard.props.join('、')}</div>
                         </div>
-                      </div>
-                    ),
-                  },
-                ]}
-              />
+                        <Divider />
+                        <Space wrap>
+                          <Button icon={<EditOutlined />}>编辑标题（Mock）</Button>
+                          <Button icon={<MergeCellsOutlined />}>合并到上一条（Mock）</Button>
+                          <Button icon={<DeleteOutlined />} danger>删除（Mock）</Button>
+                          <Button icon={<VideoCameraOutlined />}>标记为转场（Mock）</Button>
+                        </Space>
+                      </Card>
+                    ) : (
+                      <Empty description="请从左侧选择一条分镜建议" />
+                    )}
+                  </div>
+                )}
+
+                {selectedKind === 'roles' && (
+                  <div className="space-y-3">
+                    <div className="font-medium">角色</div>
+                    {selectedRole ? (
+                      <Card size="small">
+                        <div className="flex items-center justify-between">
+                          <div className="text-base font-semibold">{selectedRole.name}</div>
+                          <Space>
+                            <span className="text-sm text-gray-500">主要角色</span>
+                            <Switch checked={selectedRole.primary} />
+                          </Space>
+                        </div>
+                        <div className="text-sm text-gray-500 mt-1">首次出现：{selectedRole.firstSeen}</div>
+                        <Divider />
+                        <div className="text-sm">{selectedRole.description}</div>
+                        <div className="mt-2">
+                          {selectedRole.aliases.map((a) => (
+                            <Tag key={a}>{a}</Tag>
+                          ))}
+                        </div>
+                        <Divider />
+                        <Space wrap>
+                          <Button>关联资产库角色（Mock）</Button>
+                          <Button type="primary">创建新角色资产（Mock）</Button>
+                          <Button danger icon={<DeleteOutlined />}>删除（Mock）</Button>
+                        </Space>
+                      </Card>
+                    ) : (
+                      <Empty description="请从左侧选择一个角色" />
+                    )}
+                  </div>
+                )}
+
+                {selectedKind === 'scenes' && (
+                  <div className="space-y-3">
+                    <div className="font-medium">场景</div>
+                    {selectedScene ? (
+                      <Card size="small">
+                        <div className="text-base font-semibold">{selectedScene.name}</div>
+                        <div className="text-sm text-gray-500 mt-1">{selectedScene.indoorOutdoor} · {selectedScene.time}</div>
+                        <Divider />
+                        <div className="flex flex-wrap gap-2">
+                          {selectedScene.keywords.map((k) => <Tag key={k} color="blue">{k}</Tag>)}
+                        </div>
+                        <Divider />
+                        <Space wrap>
+                          <Button>关联资产库场景（Mock）</Button>
+                          <Button type="primary">创建新场景资产（Mock）</Button>
+                          <Button danger icon={<DeleteOutlined />}>删除（Mock）</Button>
+                        </Space>
+                      </Card>
+                    ) : (
+                      <Empty description="请从左侧选择一个场景" />
+                    )}
+                  </div>
+                )}
+
+                {selectedKind === 'props' && (
+                  <div className="space-y-3">
+                    <div className="font-medium">道具</div>
+                    {selectedProp ? (
+                      <Card size="small">
+                        <div className="flex items-center gap-2">
+                          <div className="text-base font-semibold">{selectedProp.name}</div>
+                          {selectedProp.key && <Tag color="gold">关键道具</Tag>}
+                        </div>
+                        <div className="text-sm text-gray-500 mt-1">出现次数：{selectedProp.count}</div>
+                        <Divider />
+                        <Space wrap>
+                          <Button>关联资产库道具（Mock）</Button>
+                          <Button type="primary">创建新道具资产（Mock）</Button>
+                          <Button danger icon={<DeleteOutlined />}>删除（Mock）</Button>
+                        </Space>
+                      </Card>
+                    ) : (
+                      <Empty description="请从左侧选择一个道具" />
+                    )}
+                  </div>
+                )}
+              </Card>
             </div>
-          ))}
+          </div>
+        )}
+
+        {activeStep === 1 && (
+          <Card title="场景生成" style={{ flex: 1, minHeight: 0, overflow: 'auto' }} bodyStyle={{ padding: 12 }}>
+            <div className="flex items-center justify-between mb-3">
+              <Space>
+                <Button type="primary" disabled={selectedSceneIds.length === 0} onClick={() => generateImages('scene')}>
+                  批量生成图片（Mock）
+                </Button>
+                <span className="text-xs text-gray-500">已选 {selectedSceneIds.length} 项</span>
+              </Space>
+              <Space>
+                <Button onClick={() => openAddEntity('scene')}>手动添加</Button>
+                <Button onClick={() => openPickFromAssets('scene')}>从资产库添加</Button>
+              </Space>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {sceneDrafts.map((s) => (
+                <Card
+                  key={s.id}
+                  size="small"
+                  title={
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        checked={selectedSceneIds.includes(s.id)}
+                        onChange={(e) =>
+                          setSelectedSceneIds((prev) =>
+                            e.target.checked ? [...prev, s.id] : prev.filter((x) => x !== s.id),
+                          )
+                        }
+                      />
+                      <span className="truncate">{s.name}</span>
+                    </div>
+                  }
+                  extra={
+                    <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEditEntity('scene', s.id)}>
+                      编辑
+                    </Button>
+                  }
+                >
+                  <div className="text-xs text-gray-500 mb-2 line-clamp-2">{s.description || '暂无描述'}</div>
+                  <div className="h-32 rounded-md border border-gray-200 bg-gray-50 flex items-center justify-center text-gray-500 text-sm">
+                    {s.imageUrl ? '已生成（Mock）' : '未生成'}
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {activeStep === 2 && (
+          <Card title="道具生成" style={{ flex: 1, minHeight: 0, overflow: 'auto' }} bodyStyle={{ padding: 12 }}>
+            <div className="flex items-center justify-between mb-3">
+              <Space>
+                <Button type="primary" disabled={selectedPropIds.length === 0} onClick={() => generateImages('prop')}>
+                  批量生成图片（Mock）
+                </Button>
+                <span className="text-xs text-gray-500">已选 {selectedPropIds.length} 项</span>
+              </Space>
+              <Space>
+                <Button onClick={() => openAddEntity('prop')}>手动添加</Button>
+                <Button onClick={() => openPickFromAssets('prop')}>从资产库添加</Button>
+              </Space>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {propDrafts.map((p) => (
+                <Card
+                  key={p.id}
+                  size="small"
+                  title={
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        checked={selectedPropIds.includes(p.id)}
+                        onChange={(e) =>
+                          setSelectedPropIds((prev) =>
+                            e.target.checked ? [...prev, p.id] : prev.filter((x) => x !== p.id),
+                          )
+                        }
+                      />
+                      <span className="truncate">{p.name}</span>
+                    </div>
+                  }
+                  extra={
+                    <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEditEntity('prop', p.id)}>
+                      编辑
+                    </Button>
+                  }
+                >
+                  <div className="text-xs text-gray-500 mb-2 line-clamp-2">{p.description || '暂无描述'}</div>
+                  <div className="h-32 rounded-md border border-gray-200 bg-gray-50 flex items-center justify-center text-gray-500 text-sm">
+                    {p.imageUrl ? '已生成（Mock）' : '未生成'}
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {activeStep === 3 && (
+          <Card title="角色生成" style={{ flex: 1, minHeight: 0, overflow: 'auto' }} bodyStyle={{ padding: 12 }}>
+            <div className="flex items-center justify-between mb-3">
+              <Space>
+                <Button type="primary" disabled={selectedRoleIds.length === 0} onClick={() => generateImages('role')}>
+                  批量生成图片（Mock）
+                </Button>
+                <span className="text-xs text-gray-500">已选 {selectedRoleIds.length} 项</span>
+              </Space>
+              <Space>
+                <Button onClick={() => openAddEntity('role')}>手动添加</Button>
+                <Button onClick={() => openPickFromAssets('role')}>从资产库添加</Button>
+              </Space>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {roleDrafts.map((r) => (
+                <Card
+                  key={r.id}
+                  size="small"
+                  title={
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        checked={selectedRoleIds.includes(r.id)}
+                        onChange={(e) =>
+                          setSelectedRoleIds((prev) =>
+                            e.target.checked ? [...prev, r.id] : prev.filter((x) => x !== r.id),
+                          )
+                        }
+                      />
+                      <span className="truncate">{r.name}</span>
+                    </div>
+                  }
+                  extra={
+                    <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEditEntity('role', r.id)}>
+                      编辑
+                    </Button>
+                  }
+                >
+                  <div className="text-xs text-gray-500 mb-2 line-clamp-2">{r.description || '暂无描述'}</div>
+                  <div className="h-32 rounded-md border border-gray-200 bg-gray-50 flex items-center justify-center text-gray-500 text-sm">
+                    {r.imageUrl ? '已生成（Mock）' : '未生成'}
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {activeStep === 4 && (
+          <Card title="分镜预览" style={{ flex: 1, minHeight: 0, overflow: 'auto' }} bodyStyle={{ padding: 12 }}>
+            <Table<StoryboardDraft>
+              rowKey="id"
+              dataSource={storyboardDrafts}
+              pagination={{ pageSize: 10 }}
+              size="small"
+              columns={[
+                { title: '序号', dataIndex: 'index', key: 'index', width: 80 },
+                { title: '标题', dataIndex: 'title', key: 'title', ellipsis: true },
+                { title: '预览', dataIndex: 'preview', key: 'preview', ellipsis: true },
+                { title: '段落', dataIndex: 'paragraphRange', key: 'paragraphRange', width: 120 },
+                {
+                  title: '操作',
+                  key: 'action',
+                  width: 90,
+                  render: (_, record) => (
+                    <Button type="link" size="small" onClick={() => openEditStoryboard(record)}>
+                      编辑
+                    </Button>
+                  ),
+                },
+              ] as TableColumnsType<StoryboardDraft>}
+            />
+          </Card>
+        )}
+      </Content>
+
+      <Modal
+        title="编辑信息"
+        open={editEntityOpen}
+        onCancel={() => {
+          setEditEntityOpen(false)
+          setEditEntityId(null)
+        }}
+        onOk={saveEditEntity}
+        okText="保存"
+        width={560}
+      >
+        <div className="space-y-3">
+          <div>
+            <span className="text-gray-600 text-sm">名称</span>
+            <Input value={editEntityName} onChange={(e) => setEditEntityName(e.target.value)} className="mt-1" />
+          </div>
+          <div>
+            <span className="text-gray-600 text-sm">描述</span>
+            <Input.TextArea
+              value={editEntityDesc}
+              onChange={(e) => setEditEntityDesc(e.target.value)}
+              rows={6}
+              className="mt-1"
+            />
+          </div>
         </div>
       </Modal>
+
+      <Modal
+        title="手动添加"
+        open={addEntityOpen}
+        onCancel={() => setAddEntityOpen(false)}
+        onOk={addEntity}
+        okText="添加"
+        width={560}
+      >
+        <div className="space-y-3">
+          <div>
+            <span className="text-gray-600 text-sm">名称</span>
+            <Input value={addEntityName} onChange={(e) => setAddEntityName(e.target.value)} className="mt-1" />
+          </div>
+          <div>
+            <span className="text-gray-600 text-sm">描述</span>
+            <Input.TextArea
+              value={addEntityDesc}
+              onChange={(e) => setAddEntityDesc(e.target.value)}
+              rows={6}
+              className="mt-1"
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        title="从资产库添加（Mock）"
+        open={pickFromAssetsOpen}
+        onCancel={() => setPickFromAssetsOpen(false)}
+        onOk={confirmPickFromAssets}
+        okText="添加所选"
+        width={560}
+      >
+        <div className="text-xs text-gray-500 mb-2">当前数据来自本地“已存在集合”的 Mock。</div>
+        <Checkbox.Group
+          value={pickFromAssetsSelected}
+          onChange={(vals) => setPickFromAssetsSelected(vals as string[])}
+          className="w-full"
+        >
+          <div className="space-y-2">
+            {(pickFromAssetsKind === 'scene'
+              ? existingEntities.scenes
+              : pickFromAssetsKind === 'prop'
+                ? existingEntities.props
+                : existingEntities.roles
+            ).map((name) => (
+              <div key={name} className="flex items-center justify-between">
+                <Checkbox value={name}>{name}</Checkbox>
+              </div>
+            ))}
+          </div>
+        </Checkbox.Group>
+        {((pickFromAssetsKind === 'scene'
+          ? existingEntities.scenes
+          : pickFromAssetsKind === 'prop'
+            ? existingEntities.props
+            : existingEntities.roles
+        ).length === 0) && <Empty description="资产库暂无内容（Mock）" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+      </Modal>
+
+      <Modal
+        title={editingStoryboard ? `编辑分镜：${editingStoryboard.title}` : '编辑分镜'}
+        open={editStoryboardOpen}
+        onCancel={() => {
+          setEditStoryboardOpen(false)
+          setEditingStoryboard(null)
+        }}
+        onOk={saveStoryboard}
+        okText="保存"
+        width={640}
+      >
+        <div className="space-y-3">
+          <div>
+            <span className="text-gray-600 text-sm">标题</span>
+            <Input
+              value={editingStoryboard?.title ?? ''}
+              onChange={(e) =>
+                setEditingStoryboard((prev) => (prev ? { ...prev, title: e.target.value } : prev))
+              }
+              className="mt-1"
+            />
+          </div>
+          <div>
+            <span className="text-gray-600 text-sm">预览</span>
+            <Input.TextArea
+              value={editingStoryboard?.preview ?? ''}
+              onChange={(e) =>
+                setEditingStoryboard((prev) => (prev ? { ...prev, preview: e.target.value } : prev))
+              }
+              rows={5}
+              className="mt-1"
+            />
+          </div>
+          <div>
+            <span className="text-gray-600 text-sm">段落范围</span>
+            <Input
+              value={editingStoryboard?.paragraphRange ?? ''}
+              onChange={(e) =>
+                setEditingStoryboard((prev) => (prev ? { ...prev, paragraphRange: e.target.value } : prev))
+              }
+              className="mt-1"
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <ChapterRawTextEditorModal
+        open={editorModalOpen}
+        onClose={() => setEditorModalOpen(false)}
+        chapterId={chapterId}
+        onSaved={(next) => {
+          if (typeof next.rawText === 'string') setRawText(next.rawText)
+          if (typeof next.condensedText === 'string') setCondensedText(next.condensedText)
+        }}
+      />
 
       {/* 提取结果回显浮窗 */}
       <Modal
