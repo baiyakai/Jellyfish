@@ -121,31 +121,10 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### 单元测试与集成测试（Mock）
 
-- **单元测试**：`tests/test_skills_runtime_runners.py`，对 `app.chains.agents` 下 `FilmEntityExtractorAgent` / `FilmShotlistStoryboarderAgent` 的 run、format_output、extract 等行为做断言，使用 Mock Agent，无需网络与 API Key。
-- **集成测试（Mock）**：`tests/test_skills_integration.py` 中的 `TestAppIntegration`、`TestSkillsPipelineIntegration`，覆盖 FastAPI 健康检查、示例路由、以及技能完整链路（真实 Prompt + Mock Agent + 真实解析）。
+- **集成测试（Mock）**：`tests/test_skills_integration.py` 中的 `TestAppIntegration`，覆盖 FastAPI 健康检查与示例路由。
 
 ```bash
-uv run pytest tests/test_skills_runtime_runners.py tests/test_skills_integration.py -v
-```
-
-### 真实 LLM 集成测试（可选）
-
-带 `@pytest.mark.integration` 的用例会调用真实 ChatOpenAI（或兼容接口），需设置 `OPENAI_API_KEY`，否则自动跳过。
-
-| 环境变量 | 说明 |
-|----------|------|
-| `OPENAI_API_KEY` | 必填，否则跳过真实 LLM 测试 |
-| `OPENAI_BASE_URL` | 可选，API 地址（如代理、DashScope 兼容地址） |
-| `OPENAI_MODEL` | 可选，模型名，默认 `gpt-4o-mini` |
-
-**运行真实 LLM 集成测试：**
-
-```bash
-# 仅运行 integration 标记的测试
-OPENAI_API_KEY=sk-xxx uv run pytest tests/test_skills_integration.py -m integration -v
-
-# 使用自定义 base_url / model
-OPENAI_API_KEY=sk-xxx OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1 OPENAI_MODEL=qwen-max uv run pytest tests/test_skills_integration.py -m integration -v
+uv run pytest tests/test_skills_integration.py -v
 ```
 
 真实 LLM 测试前请安装可选依赖：`uv sync --group dev`（含 `langchain-openai`）。
