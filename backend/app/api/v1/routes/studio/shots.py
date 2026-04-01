@@ -35,6 +35,8 @@ from app.models.studio import (
     ShotFrameImage,
 )
 from app.schemas.common import ApiResponse, PaginatedData, paginated_response, success_response
+from app.schemas.skills.script_processing import StudioScriptExtractionDraft
+from app.services.studio.shot_extraction_draft import build_script_extraction_draft_for_shot
 from app.schemas.studio.shots import (
     ProjectActorLinkRead,
     ProjectAssetLinkCreate,
@@ -171,6 +173,19 @@ async def create_shot(
     await db.flush()
     await db.refresh(obj)
     return success_response(ShotRead.model_validate(obj), code=201)
+
+
+@router.get(
+    "/{shot_id}/extraction-draft",
+    response_model=ApiResponse[StudioScriptExtractionDraft],
+    summary="分镜详情：按镜头关联拼装 StudioScriptExtractionDraft",
+)
+async def get_shot_extraction_draft(
+    shot_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[StudioScriptExtractionDraft]:
+    data = await build_script_extraction_draft_for_shot(db, shot_id)
+    return success_response(data)
 
 
 @router.get(

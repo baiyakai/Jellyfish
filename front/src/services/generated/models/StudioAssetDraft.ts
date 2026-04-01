@@ -3,9 +3,23 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Studio 资产草稿（Scene/Prop/Costume）：不含 id，由导入 API 生成。
+ * Studio 资产草稿（Scene/Prop/Costume）。
+ *
+ * 导入 API 未传 id 时由服务端生成；分镜详情回填时可带 scene_id/prop_id/costume_id。
  */
 export type StudioAssetDraft = {
+    /**
+     * 资产 ID（已落库时回填，如 scene_id / prop_id / costume_id）
+     */
+    id?: (string | null);
+    /**
+     * 关联的文件 ID（可空）
+     */
+    file_id?: (string | null);
+    /**
+     * 缩略图下载地址（可空）
+     */
+    thumbnail?: (string | null);
     /**
      * 名称（同项目内建议唯一）
      */

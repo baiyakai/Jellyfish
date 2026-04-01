@@ -8,6 +8,7 @@ export function CostumesTab() {
   return (
     <AssetTypeTab
       label="服装"
+      tabKey="costume"
       listAssets={async ({ q, page, pageSize }) => {
         const res = await StudioEntitiesApi.list('costume', { q: q ?? null, page, pageSize })
         return { items: (res.data?.items ?? []) as any[], total: res.data?.pagination.total ?? 0 }

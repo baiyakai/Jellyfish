@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Card, Input, InputNumber, Row, Col, Tag, Button, message, Modal, Space, Pagination } from 'antd'
 import { EditOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { useSearchParams } from 'react-router-dom'
 import { resolveAssetUrl } from '../utils'
 import { DisplayImageCard } from '../components/DisplayImageCard'
 import { PROJECT_STYLE_OPTIONS_BY_VISUAL, ProjectVisualStyleAndStyleFields } from '../../project/ProjectVisualStyleAndStyleFields'
@@ -50,6 +51,7 @@ type AssetCreatePayload = Record<string, unknown> & {
 
 export function AssetTypeTab({
   label,
+  tabKey,
   listAssets,
   createAsset,
   updateAsset,
@@ -57,12 +59,14 @@ export function AssetTypeTab({
   onEditAsset,
 }: {
   label: string
+  tabKey: 'scene' | 'prop' | 'costume'
   listAssets: (params: { q?: string; page: number; pageSize: number }) => Promise<{ items: StudioAssetLike[]; total: number }>
   createAsset: (payload: AssetCreatePayload) => Promise<StudioAssetLike>
   updateAsset: (id: string, payload: AssetMutationPayload) => Promise<StudioAssetLike>
   deleteAsset: (id: string) => Promise<void>
   onEditAsset?: (asset: StudioAssetLike) => void
 }) {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [assets, setAssets] = useState<StudioAssetLike[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -119,6 +123,33 @@ export function AssetTypeTab({
     setFormStyle(PROJECT_STYLE_OPTIONS_BY_VISUAL['现实'][0]?.value ?? '真人都市')
     setEditOpen(true)
   }
+
+  useEffect(() => {
+    const create = searchParams.get('create')
+    const name = searchParams.get('name') ?? ''
+    const desc = searchParams.get('desc') ?? ''
+    const tab = searchParams.get('tab')
+    if (create === '1' && tab === tabKey) {
+      setEditing(null)
+      setFormName(name)
+      setFormDesc(desc)
+      setFormTags('')
+      setFormViewCount(null)
+      setFormVisualStyle('现实')
+      setFormStyle(PROJECT_STYLE_OPTIONS_BY_VISUAL['现实'][0]?.value ?? '真人都市')
+      setEditOpen(true)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.delete('create')
+          next.delete('name')
+          next.delete('desc')
+          return next
+        },
+        { replace: true },
+      )
+    }
+  }, [searchParams, setSearchParams, tabKey])
 
   const openEdit = (asset: StudioAssetLike) => {
     setEditing(asset)

@@ -3,12 +3,34 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApiResponse_dict_str__Any__ } from '../models/ApiResponse_dict_str__Any__';
+import type { ApiResponse_EntityNameExistenceCheckResponse_ } from '../models/ApiResponse_EntityNameExistenceCheckResponse_';
 import type { ApiResponse_NoneType_ } from '../models/ApiResponse_NoneType_';
 import type { ApiResponse_PaginatedData_dict_str__Any___ } from '../models/ApiResponse_PaginatedData_dict_str__Any___';
+import type { EntityNameExistenceCheckRequest } from '../models/EntityNameExistenceCheckRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class StudioEntitiesService {
+    /**
+     * 批量检测资产名称是否存在（模糊匹配，不分页）
+     * @returns ApiResponse_EntityNameExistenceCheckResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static checkEntityNamesExistenceApiV1StudioEntitiesExistenceCheckPost({
+        requestBody,
+    }: {
+        requestBody: EntityNameExistenceCheckRequest,
+    }): CancelablePromise<ApiResponse_EntityNameExistenceCheckResponse_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/studio/entities/existence-check',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
     /**
      * 统一实体列表（分页）
      * @returns ApiResponse_PaginatedData_dict_str__Any___ Successful Response

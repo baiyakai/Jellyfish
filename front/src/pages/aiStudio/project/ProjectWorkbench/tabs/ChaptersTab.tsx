@@ -5,9 +5,10 @@ import { PlusOutlined, VideoCameraOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { StudioChaptersService } from '../../../../../services/generated'
 import { chapterStatusMap } from '../constants'
-import { getChapterPrepDraftsPath, getChapterPrepPath, getChapterShotsPath, getChapterStudioPath } from '../routes'
+import { getChapterShotsPath } from '../routes'
 import { useChapters, newId, type Chapter } from '../hooks/useProjectData'
 import { ChapterRawTextEditorModal } from '../../../chapter/components/ChapterRawTextEditorModal'
+import { ensureHasShotsBeforeShooting } from '../ensureHasShotsBeforeShooting'
 
 const { TextArea } = Input
 const CREATE_PARAM = 'create'
@@ -42,21 +43,6 @@ export function ChaptersTab() {
   const openEditModal = (chapter: Chapter) => {
     setEditingChapter(chapter)
     setEditOpen(true)
-  }
-
-  const goPrep = (chapterId: string, storyboardCount: number) => {
-    if (!projectId) return
-    if (storyboardCount !== 0) {
-      Modal.confirm({
-        title: '确认重新提取？',
-        content: '当前章节已存在信息，重新提取将会覆盖',
-        okText: '继续',
-        cancelText: '取消',
-        onOk: () => navigate(getChapterPrepPath(projectId, chapterId)),
-      })
-      return
-    }
-    navigate(getChapterPrepPath(projectId, chapterId))
   }
 
   const handleCreateChapter = async () => {
@@ -140,20 +126,6 @@ export function ChaptersTab() {
           <Button
             type="link"
             size="small"
-            onClick={() => goPrep(record.id, record.storyboardCount)}
-          >
-            信息提取
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            onClick={() => projectId && navigate(getChapterPrepDraftsPath(projectId, record.id))}
-          >
-            拍摄准备
-          </Button>
-          <Button
-            type="link"
-            size="small"
             onClick={() => projectId && navigate(getChapterShotsPath(projectId, record.id))}
           >
             分镜
@@ -162,7 +134,14 @@ export function ChaptersTab() {
             type="link"
             size="small"
             icon={<VideoCameraOutlined />}
-            onClick={() => projectId && navigate(getChapterStudioPath(projectId, record.id))}
+            onClick={() =>
+              ensureHasShotsBeforeShooting({
+                projectId,
+                chapterId: record.id,
+                storyboardCount: record.storyboardCount,
+                navigate,
+              })
+            }
           >
             进入拍摄
           </Button>

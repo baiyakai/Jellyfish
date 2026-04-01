@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.chains.agents import (
     CharacterPortraitAnalysisAgent,
@@ -34,7 +37,8 @@ from app.chains.agents.script_processing_agents import (
     ScriptSimplificationResult,
     StudioScriptExtractionDraft,
 )
-from app.dependencies import get_llm, get_nothinking_llm
+from app.dependencies import get_db, get_llm, get_nothinking_llm
+from app.models.studio import CameraAngle, CameraMovement, CameraShotType, Chapter, Shot, ShotDetail, VFXType
 from app.schemas.common import ApiResponse, success_response
 from app.schemas.skills.character_portrait import CharacterPortraitAnalysisResult
 from app.schemas.skills.costume_info_analysis import CostumeInfoAnalysisResult
@@ -53,6 +57,12 @@ router = APIRouter(prefix="/script-processing", tags=["script-processing"])
 class ScriptDividerRequest(BaseModel):
     """剧本分镜请求。"""
     script_text: str = Field(..., description="完整剧本文本", min_length=1)
+    write_to_db: bool = Field(False, description="是否将分镜写入数据库（AI Studio shots 表）")
+    chapter_id: str | None = Field(
+        None,
+        description="章节 ID（write_to_db=true 时必填）",
+        min_length=1,
+    )
 
 
 @router.post(
@@ -68,6 +78,7 @@ class ScriptDividerRequest(BaseModel):
 async def divide_script(
     request: ScriptDividerRequest,
     llm: BaseChatModel = Depends(get_nothinking_llm),
+    db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ScriptDivisionResult]:
     """
     将完整剧本文本自动分割为多个镜头。
@@ -83,7 +94,53 @@ async def divide_script(
     try:
         agent = ScriptDividerAgent(llm)
         result = agent.divide_script(script_text=request.script_text)
+
+        if request.write_to_db:
+            if not request.chapter_id:
+                raise HTTPException(status_code=400, detail="chapter_id is required when write_to_db=true")
+
+            chapter = await db.get(Chapter, request.chapter_id)
+            if chapter is None:
+                raise HTTPException(status_code=400, detail="Chapter not found")
+
+            existing = await db.execute(
+                select(Shot.id).where(Shot.chapter_id == request.chapter_id).limit(1)
+            )
+            if existing.first() is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Chapter already has shots; refusing to write (write_strategy=fail)",
+                )
+
+            for s in result.shots:
+                title = (s.shot_name or "").strip() or f"镜头 {s.index}"
+                shot_id = str(uuid.uuid4())
+                db.add(
+                    Shot(
+                        id=shot_id,
+                        chapter_id=request.chapter_id,
+                        index=s.index,
+                        title=title,
+                        script_excerpt=s.script_excerpt,
+                    )
+                )
+                db.add(
+                    ShotDetail(
+                        id=shot_id,
+                        camera_shot=CameraShotType.ms,
+                        angle=CameraAngle.eye_level,
+                        movement=CameraMovement.static,
+                        follow_atmosphere=True,
+                        vfx_type=VFXType.none,
+                        duration=4,
+                    )
+                )
+            # 触发唯一约束/外键检查，确保在返回前失败
+            await db.flush()
+
         return success_response(data=result)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Script dividing failed: {e}")
         raise HTTPException(

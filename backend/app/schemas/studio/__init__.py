@@ -16,10 +16,8 @@ from app.schemas.studio.prompts import (
     PromptTemplateUpdate,
 )
 
-from app.schemas.studio.import_extraction_drafts import (
-    ImportCharacterDraftRead,
-    ImportCostumeDraftRead,
-    ImportDraftOccurrenceRead,
-    ImportPropDraftRead,
-    ImportSceneDraftRead,
+from app.schemas.studio.entity_existence import (
+    EntityNameExistenceCheckRequest,
+    EntityNameExistenceCheckResponse,
+    EntityNameExistenceItem,
 )

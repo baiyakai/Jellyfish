@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Card, Button, Empty, Modal, Input, message, Space, Select, Pagination } from 'antd'
 import { PlusOutlined, UserOutlined } from '@ant-design/icons'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { StudioProjectsService, StudioShotLinksService } from '../../../../../services/generated'
 import type { ProjectActorLinkRead, ProjectCostumeLinkRead } from '../../../../../services/generated'
 import { useProjectCharacters, newId } from '../hooks/useProjectData'
@@ -26,6 +26,7 @@ type CostumeLike = {
 export function RolesTab() {
   const navigate = useNavigate()
   const { projectId } = useParams<{ projectId: string }>()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { characters, loading, refresh } = useProjectCharacters(projectId)
 
   const [createOpen, setCreateOpen] = useState(false)
@@ -41,6 +42,30 @@ export function RolesTab() {
   const [costumesById, setCostumesById] = useState<Record<string, CostumeLike>>({})
   const [loadingLinks, setLoadingLinks] = useState(false)
   const [projectVisualStyle, setProjectVisualStyle] = useState<string>('现实')
+
+  useEffect(() => {
+    const create = searchParams.get('create')
+    const name = searchParams.get('name') ?? ''
+    const desc = searchParams.get('desc') ?? ''
+    const tab = searchParams.get('tab')
+    if (create === '1' && tab === 'roles') {
+      setFormName(name)
+      setFormDesc(desc)
+      setFormActorId(undefined)
+      setFormCostumeId(undefined)
+      setCreateOpen(true)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.delete('create')
+          next.delete('name')
+          next.delete('desc')
+          return next
+        },
+        { replace: true },
+      )
+    }
+  }, [searchParams, setSearchParams])
 
   const loadProjectLinks = async () => {
     if (!projectId) return

@@ -19,8 +19,9 @@ import { CostumesTab, PropsTab } from './tabs/PropsTab'
 import { FilesTab } from './tabs/FilesTab'
 import { EditTab } from './tabs/EditTab'
 import { SettingsTab } from './tabs/SettingsTab'
-import { getChapterStudioPath, getProjectEditorPath } from './routes'
+import { getProjectEditorPath } from './routes'
 import { useProject, useChapters } from './hooks/useProjectData'
+import { ensureHasShotsBeforeShooting } from './ensureHasShotsBeforeShooting'
 
 const TAB_PARAM = 'tab'
 const CREATE_PARAM = 'create'
@@ -132,7 +133,14 @@ const ProjectWorkbench: React.FC = () => {
             {latestInProgressChapter ? (
               <Button
                 icon={<VideoCameraOutlined />}
-                onClick={() => projectId && navigate(getChapterStudioPath(projectId, latestInProgressChapter.id))}
+                onClick={() =>
+                  ensureHasShotsBeforeShooting({
+                    projectId,
+                    chapterId: latestInProgressChapter.id,
+                    storyboardCount: latestInProgressChapter.storyboardCount,
+                    navigate,
+                  })
+                }
               >
                 继续拍摄{chapters.length > 0 ? `第${latestInProgressChapter.index}章` : ''}
               </Button>

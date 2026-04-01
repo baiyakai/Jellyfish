@@ -77,8 +77,8 @@ const MainLayout: React.FC = () => {
           // “章节管理”实际在项目工作台页
           href = `/projects/${projectId}?tab=chapters`
         } else if (i === 3) {
-          // 章节 ID 段没有对应独立页面，跳到拍摄准备（存在路由）
-          href = `/projects/${projectId}/chapters/${chapterId}/prep`
+          // 章节 ID 段没有对应独立页面，跳到分镜页（存在路由）
+          href = `/projects/${projectId}/chapters/${chapterId}/shots`
         }
       }
 

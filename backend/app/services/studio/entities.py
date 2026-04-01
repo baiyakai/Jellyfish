@@ -14,15 +14,22 @@ from app.models.studio import (
     Actor,
     ActorImage,
     AssetViewAngle,
+    Chapter,
     Character,
     CharacterImage,
     Costume,
     CostumeImage,
     Project,
+    ProjectActorLink,
+    ProjectCostumeLink,
+    ProjectPropLink,
+    ProjectSceneLink,
     Prop,
     PropImage,
     Scene,
     SceneImage,
+    Shot,
+    ShotCharacterLink,
 )
 from app.schemas.studio.assets import (
     AssetCreate,
@@ -36,6 +43,7 @@ from app.schemas.studio.assets import (
 )
 from app.schemas.studio.cast import ActorCreate, ActorRead, ActorUpdate, CharacterCreate, CharacterRead, CharacterUpdate
 from app.schemas.studio.cast_images import ActorImageRead
+from app.utils.project_links import upsert_project_link
 
 ENTITY_ORDER_FIELDS = {"name", "style", "visual_style", "created_at", "updated_at"}
 IMAGE_ORDER_FIELDS = {"id", "quality_level", "view_angle", "created_at", "updated_at"}
@@ -46,6 +54,13 @@ DEFAULT_VIEW_ANGLES: tuple[AssetViewAngle, ...] = (
     AssetViewAngle.right,
     AssetViewAngle.back,
 )
+
+_LINK_MODEL_BY_ENTITY: dict[str, tuple[type, str]] = {
+    "actor": (ProjectActorLink, "actor_id"),
+    "scene": (ProjectSceneLink, "scene_id"),
+    "prop": (ProjectPropLink, "prop_id"),
+    "costume": (ProjectCostumeLink, "costume_id"),
+}
 
 
 @dataclass(frozen=True)
@@ -210,6 +225,350 @@ class StudioEntitiesService:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
+    async def check_names_existence(
+        self,
+        *,
+        project_id: str,
+        shot_id: str | None = None,
+        character_names: list[str],
+        prop_names: list[str],
+        scene_names: list[str],
+        costume_names: list[str],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """批量检测名称是否存在（模糊匹配），并标记是否已关联到项目。
+
+        约定：
+        - character：仅在该 project_id 下查找（Character.project_id）。
+        - prop/scene/costume：exists 在全局资产表中查找；linked_to_project 通过 Project*Link 关联表判断。
+        - linked_to_shot：仅当传入 shot_id 时检测；角色查 ShotCharacterLink，其余查 Project*Link（shot_id 精确匹配）。
+        - 匹配规则：包含匹配（case-insensitive）：name ILIKE %q%
+        """
+        effective_shot_id = shot_id.strip() if shot_id and str(shot_id).strip() else None
+        if effective_shot_id:
+            shot_ok = (
+                await self._db.execute(
+                    select(Shot.id)
+                    .join(Chapter, Shot.chapter_id == Chapter.id)
+                    .where(Shot.id == effective_shot_id, Chapter.project_id == project_id)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if shot_ok is None:
+                raise HTTPException(status_code=404, detail="Shot not found or not in this project")
+
+        async def _exists_in_character(q: str) -> bool:
+            stmt = (
+                select(Character.id)
+                .where(Character.project_id == project_id, Character.name.ilike(f"%{q}%"))
+                .limit(1)
+            )
+            return (await self._db.execute(stmt)).scalar_one_or_none() is not None
+
+        async def _find_character_id(q: str) -> str | None:
+            stmt = (
+                select(Character.id)
+                .where(Character.project_id == project_id, Character.name.ilike(f"%{q}%"))
+                .limit(1)
+            )
+            row = (await self._db.execute(stmt)).scalar_one_or_none()
+            return str(row) if row is not None else None
+
+        async def _exists_in_asset(model: type, q: str) -> bool:
+            stmt = select(getattr(model, "id")).where(getattr(model, "name").ilike(f"%{q}%")).limit(1)
+            return (await self._db.execute(stmt)).scalar_one_or_none() is not None
+
+        async def _find_asset_id(model: type, q: str) -> str | None:
+            stmt = select(getattr(model, "id")).where(getattr(model, "name").ilike(f"%{q}%")).limit(1)
+            row = (await self._db.execute(stmt)).scalar_one_or_none()
+            return str(row) if row is not None else None
+
+        async def _linked_prop(q: str) -> bool:
+            stmt = (
+                select(ProjectPropLink.id)
+                .join(Prop, Prop.id == ProjectPropLink.prop_id)
+                .where(ProjectPropLink.project_id == project_id, Prop.name.ilike(f"%{q}%"))
+                .limit(1)
+            )
+            return (await self._db.execute(stmt)).scalar_one_or_none() is not None
+
+        async def _find_linked_prop(q: str) -> tuple[int, str] | None:
+            stmt = (
+                select(ProjectPropLink.id, Prop.id)
+                .join(Prop, Prop.id == ProjectPropLink.prop_id)
+                .where(ProjectPropLink.project_id == project_id, Prop.name.ilike(f"%{q}%"))
+                .limit(1)
+            )
+            row = (await self._db.execute(stmt)).first()
+            if not row:
+                return None
+            link_id, prop_id = row
+            return int(link_id), str(prop_id)
+
+        async def _linked_scene(q: str) -> bool:
+            stmt = (
+                select(ProjectSceneLink.id)
+                .join(Scene, Scene.id == ProjectSceneLink.scene_id)
+                .where(ProjectSceneLink.project_id == project_id, Scene.name.ilike(f"%{q}%"))
+                .limit(1)
+            )
+            return (await self._db.execute(stmt)).scalar_one_or_none() is not None
+
+        async def _find_linked_scene(q: str) -> tuple[int, str] | None:
+            stmt = (
+                select(ProjectSceneLink.id, Scene.id)
+                .join(Scene, Scene.id == ProjectSceneLink.scene_id)
+                .where(ProjectSceneLink.project_id == project_id, Scene.name.ilike(f"%{q}%"))
+                .limit(1)
+            )
+            row = (await self._db.execute(stmt)).first()
+            if not row:
+                return None
+            link_id, scene_id = row
+            return int(link_id), str(scene_id)
+
+        async def _linked_costume(q: str) -> bool:
+            stmt = (
+                select(ProjectCostumeLink.id)
+                .join(Costume, Costume.id == ProjectCostumeLink.costume_id)
+                .where(ProjectCostumeLink.project_id == project_id, Costume.name.ilike(f"%{q}%"))
+                .limit(1)
+            )
+            return (await self._db.execute(stmt)).scalar_one_or_none() is not None
+
+        async def _find_linked_costume(q: str) -> tuple[int, str] | None:
+            stmt = (
+                select(ProjectCostumeLink.id, Costume.id)
+                .join(Costume, Costume.id == ProjectCostumeLink.costume_id)
+                .where(ProjectCostumeLink.project_id == project_id, Costume.name.ilike(f"%{q}%"))
+                .limit(1)
+            )
+            row = (await self._db.execute(stmt)).first()
+            if not row:
+                return None
+            link_id, costume_id = row
+            return int(link_id), str(costume_id)
+
+        characters_out: list[dict[str, Any]] = []
+        for name in character_names or []:
+            raw = str(name)
+            q = raw.strip()
+            if not q:
+                characters_out.append(
+                    {
+                        "name": raw,
+                        "exists": False,
+                        "linked_to_project": False,
+                        "linked_to_shot": False,
+                        "asset_id": None,
+                        "link_id": None,
+                    }
+                )
+                continue
+            char_id = await _find_character_id(q)
+            exists = char_id is not None
+            characters_out.append(
+                {
+                    "name": raw,
+                    "exists": exists,
+                    "linked_to_project": exists,
+                    "linked_to_shot": False,
+                    "asset_id": char_id,
+                    "link_id": None,
+                }
+            )
+
+        props_out: list[dict[str, Any]] = []
+        for name in prop_names or []:
+            raw = str(name)
+            q = raw.strip()
+            if not q:
+                props_out.append(
+                    {
+                        "name": raw,
+                        "exists": False,
+                        "linked_to_project": False,
+                        "linked_to_shot": False,
+                        "asset_id": None,
+                        "link_id": None,
+                    }
+                )
+                continue
+            linked_row = await _find_linked_prop(q)
+            if linked_row is not None:
+                link_id, prop_id = linked_row
+                props_out.append(
+                    {
+                        "name": raw,
+                        "exists": True,
+                        "linked_to_project": True,
+                        "linked_to_shot": False,
+                        "asset_id": prop_id,
+                        "link_id": link_id,
+                    }
+                )
+                continue
+            prop_id = await _find_asset_id(Prop, q)
+            exists = prop_id is not None
+            props_out.append(
+                {
+                    "name": raw,
+                    "exists": exists,
+                    "linked_to_project": False,
+                    "linked_to_shot": False,
+                    "asset_id": prop_id,
+                    "link_id": None,
+                }
+            )
+
+        scenes_out: list[dict[str, Any]] = []
+        for name in scene_names or []:
+            raw = str(name)
+            q = raw.strip()
+            if not q:
+                scenes_out.append(
+                    {
+                        "name": raw,
+                        "exists": False,
+                        "linked_to_project": False,
+                        "linked_to_shot": False,
+                        "asset_id": None,
+                        "link_id": None,
+                    }
+                )
+                continue
+            linked_row = await _find_linked_scene(q)
+            if linked_row is not None:
+                link_id, scene_id = linked_row
+                scenes_out.append(
+                    {
+                        "name": raw,
+                        "exists": True,
+                        "linked_to_project": True,
+                        "linked_to_shot": False,
+                        "asset_id": scene_id,
+                        "link_id": link_id,
+                    }
+                )
+                continue
+            scene_id = await _find_asset_id(Scene, q)
+            exists = scene_id is not None
+            scenes_out.append(
+                {
+                    "name": raw,
+                    "exists": exists,
+                    "linked_to_project": False,
+                    "linked_to_shot": False,
+                    "asset_id": scene_id,
+                    "link_id": None,
+                }
+            )
+
+        costumes_out: list[dict[str, Any]] = []
+        for name in costume_names or []:
+            raw = str(name)
+            q = raw.strip()
+            if not q:
+                costumes_out.append(
+                    {
+                        "name": raw,
+                        "exists": False,
+                        "linked_to_project": False,
+                        "linked_to_shot": False,
+                        "asset_id": None,
+                        "link_id": None,
+                    }
+                )
+                continue
+            linked_row = await _find_linked_costume(q)
+            if linked_row is not None:
+                link_id, costume_id = linked_row
+                costumes_out.append(
+                    {
+                        "name": raw,
+                        "exists": True,
+                        "linked_to_project": True,
+                        "linked_to_shot": False,
+                        "asset_id": costume_id,
+                        "link_id": link_id,
+                    }
+                )
+                continue
+            costume_id = await _find_asset_id(Costume, q)
+            exists = costume_id is not None
+            costumes_out.append(
+                {
+                    "name": raw,
+                    "exists": exists,
+                    "linked_to_project": False,
+                    "linked_to_shot": False,
+                    "asset_id": costume_id,
+                    "link_id": None,
+                }
+            )
+
+        if effective_shot_id:
+            char_ids = {r["asset_id"] for r in characters_out if r.get("asset_id")}
+            linked_char_ids: set[str] = set()
+            if char_ids:
+                stmt = select(ShotCharacterLink.character_id).where(
+                    ShotCharacterLink.shot_id == effective_shot_id,
+                    ShotCharacterLink.character_id.in_(char_ids),
+                )
+                linked_char_ids = {row[0] for row in (await self._db.execute(stmt)).all()}
+            for r in characters_out:
+                aid = r.get("asset_id")
+                if aid and aid in linked_char_ids:
+                    r["linked_to_shot"] = True
+
+            prop_ids = {r["asset_id"] for r in props_out if r.get("asset_id")}
+            linked_prop_ids: set[str] = set()
+            if prop_ids:
+                stmt = select(ProjectPropLink.prop_id).where(
+                    ProjectPropLink.project_id == project_id,
+                    ProjectPropLink.shot_id == effective_shot_id,
+                    ProjectPropLink.prop_id.in_(prop_ids),
+                )
+                linked_prop_ids = {row[0] for row in (await self._db.execute(stmt)).all()}
+            for r in props_out:
+                aid = r.get("asset_id")
+                if aid and aid in linked_prop_ids:
+                    r["linked_to_shot"] = True
+
+            scene_ids = {r["asset_id"] for r in scenes_out if r.get("asset_id")}
+            linked_scene_ids: set[str] = set()
+            if scene_ids:
+                stmt = select(ProjectSceneLink.scene_id).where(
+                    ProjectSceneLink.project_id == project_id,
+                    ProjectSceneLink.shot_id == effective_shot_id,
+                    ProjectSceneLink.scene_id.in_(scene_ids),
+                )
+                linked_scene_ids = {row[0] for row in (await self._db.execute(stmt)).all()}
+            for r in scenes_out:
+                aid = r.get("asset_id")
+                if aid and aid in linked_scene_ids:
+                    r["linked_to_shot"] = True
+
+            costume_ids = {r["asset_id"] for r in costumes_out if r.get("asset_id")}
+            linked_costume_ids: set[str] = set()
+            if costume_ids:
+                stmt = select(ProjectCostumeLink.costume_id).where(
+                    ProjectCostumeLink.project_id == project_id,
+                    ProjectCostumeLink.shot_id == effective_shot_id,
+                    ProjectCostumeLink.costume_id.in_(costume_ids),
+                )
+                linked_costume_ids = {row[0] for row in (await self._db.execute(stmt)).all()}
+            for r in costumes_out:
+                aid = r.get("asset_id")
+                if aid and aid in linked_costume_ids:
+                    r["linked_to_shot"] = True
+
+        return {
+            "characters": characters_out,
+            "props": props_out,
+            "scenes": scenes_out,
+            "costumes": costumes_out,
+        }
+
     async def _resolve_thumbnails(self, *, image_model: type, parent_field_name: str, parent_ids: list[str]) -> dict[str, str]:
         return await resolve_thumbnails(
             self._db,
@@ -275,6 +634,14 @@ class StudioEntitiesService:
         parsed = spec.create_model.model_validate(body)
         data = parsed.model_dump()
 
+        link_project_id: str | None = None
+        link_chapter_id: str | None = None
+        link_shot_id: str | None = None
+        if t in _LINK_MODEL_BY_ENTITY:
+            link_project_id = data.pop("project_id", None)
+            link_chapter_id = data.pop("chapter_id", None)
+            link_shot_id = data.pop("shot_id", None)
+
         exists = await self._db.get(spec.model, data["id"])
         if exists is not None:
             raise HTTPException(status_code=400, detail=f"{spec.model.__name__} with id={data['id']} already exists")
@@ -300,6 +667,18 @@ class StudioEntitiesService:
                 self._db.add(spec.image_model(**{spec.id_field: obj.id, "view_angle": angle}))
             if angles:
                 await self._db.flush()
+
+        if link_project_id is not None and t in _LINK_MODEL_BY_ENTITY:
+            link_model, asset_field = _LINK_MODEL_BY_ENTITY[t]
+            await upsert_project_link(
+                self._db,
+                model=link_model,
+                asset_field=asset_field,  # type: ignore[arg-type]
+                asset_id=obj.id,
+                project_id=link_project_id,
+                chapter_id=link_chapter_id,
+                shot_id=link_shot_id,
+            )
 
         if t in {"actor", "character"}:
             read_model = spec.read_model

@@ -15,6 +15,7 @@ from typing import cast
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import Response
 
 from app.api.utils import apply_keyword_filter, apply_order, paginate
 from app.dependencies import get_db
@@ -51,10 +52,10 @@ _PROMPT_CATEGORY_ZH: dict[PromptCategory, tuple[str, str]] = {
     PromptCategory.frame_key_prompt: ("关键帧图片提示词", "用于生成关键帧图片文案的提示词"),
     PromptCategory.video_prompt: ("视频提示词", "用于视频生成的整体提示词"),
     PromptCategory.storyboard_prompt: ("分镜提示词", "用于分镜拆解与描述的提示词"),
-    # 暂不启用
-    # PromptCategory.combined: ("组合提示词", "用于组合多段提示词的模板"),
-    # PromptCategory.bgm: ("背景音乐提示词", "用于生成背景音乐描述的提示词"),
-    # PromptCategory.sfx: ("音效提示词", "用于生成音效描述的提示词"),
+    # 预留/扩展类别（即使暂时不用，也需要完整映射用于前端展示与校验）
+    PromptCategory.combined: ("组合提示词", "用于组合多段提示词的模板"),
+    PromptCategory.bgm: ("背景音乐提示词", "用于生成背景音乐描述的提示词"),
+    PromptCategory.sfx: ("音效提示词", "用于生成音效描述的提示词"),
 }
 
 
@@ -215,12 +216,13 @@ async def update_prompt_template(
 @router.delete(
     "/{template_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
     summary="删除提示词模板",
 )
 async def delete_prompt_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Response:
     obj = await db.get(PromptTemplate, template_id)
     if obj is None:
         raise HTTPException(status_code=404, detail="PromptTemplate not found")
@@ -229,4 +231,5 @@ async def delete_prompt_template(
     if obj.is_default:
         raise HTTPException(status_code=403, detail="默认提示词不可删除，请先将其他提示词设为默认")
     await db.delete(obj)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 

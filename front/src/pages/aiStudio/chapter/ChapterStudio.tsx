@@ -3542,41 +3542,6 @@ function Inspector(props: {
               ),
             },
             {
-              key: 'prompt_video',
-              label: '视频提示词',
-              children: (
-                <div className="cs-group">
-                  <div className="cs-group-title">
-                    <FileTextOutlined /> 视频提示词
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    <Select<PromptFrameType>
-                      size="small"
-                      value={videoPromptFrameType}
-                      onChange={setVideoPromptFrameType}
-                      style={{ width: 120 }}
-                      options={[
-                        { value: 'first', label: '首帧' },
-                        { value: 'key', label: '关键帧' },
-                        { value: 'last', label: '尾帧' },
-                      ]}
-                    />
-                    <Button size="small" type="primary" loading={videoPromptGenerating} onClick={handleGenerateVideoPrompt}>
-                      生成
-                    </Button>
-                  </div>
-                  <TextArea
-                    rows={8}
-                    placeholder="独立视频提示词（支持多版本管理）…"
-                    className="font-mono text-xs"
-                    value={getPromptFromDetailByType(videoPromptFrameType)}
-                    onChange={(e) => patchPromptToDetailByType(videoPromptFrameType, e.target.value)}
-                  />
-                  <div className="cs-hint mt-2">多版本管理：可结合右侧“生成与参考”一起迭代。</div>
-                </div>
-              ),
-            },
-            {
               key: 'keyframe_gen',
               label: '关键帧生成',
               children: (

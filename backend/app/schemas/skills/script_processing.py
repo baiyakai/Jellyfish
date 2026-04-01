@@ -272,10 +272,16 @@ class ScriptExtractionResult(BaseModel):
 
 
 class StudioAssetDraft(BaseModel):
-    """Studio 资产草稿（Scene/Prop/Costume）：不含 id，由导入 API 生成。"""
+    """Studio 资产草稿（Scene/Prop/Costume）。
+
+    导入 API 未传 id 时由服务端生成；分镜详情回填时可带 scene_id/prop_id/costume_id。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    id: Optional[str] = Field(None, description="资产 ID（已落库时回填，如 scene_id / prop_id / costume_id）")
+    file_id: Optional[str] = Field(None, description="关联的文件 ID（可空）")
+    thumbnail: Optional[str] = Field(None, description="缩略图下载地址（可空）")
     name: str = Field(..., description="名称（同项目内建议唯一）")
     description: str = Field("", description="描述")
     tags: List[str] = Field(default_factory=list, description="标签")
@@ -284,10 +290,17 @@ class StudioAssetDraft(BaseModel):
 
 
 class StudioCharacterDraft(BaseModel):
-    """Studio 角色草稿：不含 id，由导入 API 生成。"""
+    """Studio 角色草稿。
+
+    导入 API 未传 id 时由服务端生成；分镜详情回填时可带 character_id。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    id: Optional[str] = Field(None, description="角色 ID（已落库时回填 character_id）")
+    file_id: Optional[str] = Field(None, description="关联的文件 ID（可空）")
+    thumbnail: Optional[str] = Field(None, description="缩略图下载地址（可空）")
+    index: Optional[int] = Field(None, description="镜头内角色排序（shot_character_links.index）")
     name: str = Field(..., description="角色名称（同项目内建议唯一）")
     description: str = Field("", description="角色描述")
     tags: List[str] = Field(default_factory=list, description="标签（可选）")

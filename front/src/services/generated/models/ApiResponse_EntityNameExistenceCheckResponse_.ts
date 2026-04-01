@@ -2,8 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { PrepDraftShotRead } from './PrepDraftShotRead';
-export type ApiResponse_PrepDraftShotRead_ = {
+import type { EntityNameExistenceCheckResponse } from './EntityNameExistenceCheckResponse';
+export type ApiResponse_EntityNameExistenceCheckResponse_ = {
     /**
      * 与 HTTP 状态码一致
      */
@@ -15,6 +15,6 @@ export type ApiResponse_PrepDraftShotRead_ = {
     /**
      * 实际数据
      */
-    data?: (PrepDraftShotRead | null);
+    data?: (EntityNameExistenceCheckResponse | null);
 };
 

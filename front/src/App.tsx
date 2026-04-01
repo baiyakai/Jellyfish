@@ -18,11 +18,8 @@ import VideoEditor from './pages/aiStudio/editor/VideoEditor'
 import AgentManagement from './pages/aiStudio/agents/AgentManagement'
 import AgentEdit from './pages/aiStudio/agents/AgentEdit.tsx'
 import ModelManagement from './pages/aiStudio/models/ModelManagement'
-import ChapterPrepLayout from './pages/aiStudio/chapter/prep/ChapterPrepLayout'
-import DivideStep from './pages/aiStudio/chapter/prep/steps/DivideStep'
-import ExtractProjectStep from './pages/aiStudio/chapter/prep/steps/ExtractProjectStep'
 import { ChapterShotsPage } from './pages/aiStudio/shots/ChapterShotsPage'
-import ChapterPrepDraftsPage from './pages/aiStudio/chapter/prep_drafts/ChapterPrepDraftsPage'
+import { ChapterShotEditPage } from './pages/aiStudio/shots/ChapterShotEditPage'
 import './App.css'
 
 const App: React.FC = () => {
@@ -34,15 +31,11 @@ const App: React.FC = () => {
           <Route path="projects" element={<ProjectLobby />} />
           <Route path="projects/:projectId" element={<ProjectWorkbench />} />
           <Route path="projects/:projectId/roles/:characterId/edit" element={<RoleDetailPage />} />
-          <Route path="projects/:projectId/chapters/:chapterId/prep" element={<ChapterPrepLayout />}>
-            <Route index element={<Navigate to="divide" replace />} />
-            <Route path="consistency" element={<Navigate to="../divide" replace />} />
-            <Route path="divide" element={<DivideStep />} />
-            <Route path="extract" element={<ExtractProjectStep />} />
-          </Route>
+          <Route path="projects/:projectId/chapters/:chapterId/prep/*" element={<Navigate to="../shots" replace />} />
           <Route path="projects/:projectId/chapters/:chapterId/studio" element={<ChapterStudio />} />
+          <Route path="projects/:projectId/chapters/:chapterId/shots/:shotId/edit" element={<ChapterShotEditPage />} />
           <Route path="projects/:projectId/chapters/:chapterId/shots" element={<ChapterShotsPage />} />
-          <Route path="projects/:projectId/chapters/:chapterId/prep-drafts" element={<ChapterPrepDraftsPage />} />
+          <Route path="projects/:projectId/chapters/:chapterId/prep-drafts" element={<Navigate to="../shots" replace />} />
           <Route path="projects/:projectId/editor" element={<VideoEditor />} />
           <Route path="assets" element={<AssetManager />} />
           <Route path="assets/actors/:actorImageId/edit" element={<ActorAssetEditPage />} />

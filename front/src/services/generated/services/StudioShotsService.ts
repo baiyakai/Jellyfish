@@ -6,6 +6,7 @@ import type { ApiResponse_NoneType_ } from '../models/ApiResponse_NoneType_';
 import type { ApiResponse_PaginatedData_ShotLinkedAssetItem__ } from '../models/ApiResponse_PaginatedData_ShotLinkedAssetItem__';
 import type { ApiResponse_PaginatedData_ShotRead__ } from '../models/ApiResponse_PaginatedData_ShotRead__';
 import type { ApiResponse_ShotRead_ } from '../models/ApiResponse_ShotRead_';
+import type { ApiResponse_StudioScriptExtractionDraft_ } from '../models/ApiResponse_StudioScriptExtractionDraft_';
 import type { ShotCreate } from '../models/ShotCreate';
 import type { ShotUpdate } from '../models/ShotUpdate';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -69,6 +70,27 @@ export class StudioShotsService {
             url: '/api/v1/studio/shots',
             body: requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * 分镜详情：按镜头关联拼装 StudioScriptExtractionDraft
+     * @returns ApiResponse_StudioScriptExtractionDraft_ Successful Response
+     * @throws ApiError
+     */
+    public static getShotExtractionDraftApiV1StudioShotsShotIdExtractionDraftGet({
+        shotId,
+    }: {
+        shotId: string,
+    }): CancelablePromise<ApiResponse_StudioScriptExtractionDraft_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/studio/shots/{shot_id}/extraction-draft',
+            path: {
+                'shot_id': shotId,
+            },
             errors: {
                 422: `Validation Error`,
             },

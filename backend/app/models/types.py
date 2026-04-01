@@ -160,15 +160,6 @@ class VFXType(str, Enum):
     other = "OTHER"  # 其他
 
 
-class ImportDraftType(str, Enum):
-    """导入草稿类型（用于 occurrence 归档）。"""
-
-    character = "character"
-    scene = "scene"
-    prop = "prop"
-    costume = "costume"
-
-
 class PromptCategory(str, Enum):
     """提示词模板类别。"""
 

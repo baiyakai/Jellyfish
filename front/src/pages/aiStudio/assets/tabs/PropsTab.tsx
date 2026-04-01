@@ -8,6 +8,7 @@ export function PropsTab() {
   return (
     <AssetTypeTab
       label="道具"
+      tabKey="prop"
       listAssets={async ({ q, page, pageSize }) => {
         const res = await StudioEntitiesApi.list('prop', { q: q ?? null, page, pageSize })
         return { items: (res.data?.items ?? []) as any[], total: res.data?.pagination.total ?? 0 }

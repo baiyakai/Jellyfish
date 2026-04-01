@@ -9,9 +9,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.schemas.common import ApiResponse, PaginatedData, paginated_response, success_response
+from app.schemas.studio.entity_existence import (
+    EntityNameExistenceCheckRequest,
+    EntityNameExistenceCheckResponse,
+)
 from app.services.studio import StudioEntitiesService
 
 router = APIRouter()
+
+
+@router.post(
+    "/existence-check",
+    response_model=ApiResponse[EntityNameExistenceCheckResponse],
+    summary="批量检测资产名称是否存在（模糊匹配，不分页）",
+)
+async def check_entity_names_existence(
+    body: EntityNameExistenceCheckRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[EntityNameExistenceCheckResponse]:
+    service = StudioEntitiesService(db)
+    data = await service.check_names_existence(
+        project_id=body.project_id,
+        shot_id=body.shot_id,
+        character_names=body.character_names,
+        prop_names=body.prop_names,
+        scene_names=body.scene_names,
+        costume_names=body.costume_names,
+    )
+    return success_response(EntityNameExistenceCheckResponse.model_validate(data))
+
 
 @router.get("/{entity_type}", response_model=ApiResponse[PaginatedData[dict[str, Any]]], summary="统一实体列表（分页）")
 async def list_entities(

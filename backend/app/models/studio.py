@@ -15,13 +15,6 @@ from app.models.studio_asset_images import (
     PropImage,
     SceneImage,
 )
-from app.models.studio_import_drafts import (
-    ImportCharacterDraft,
-    ImportCostumeDraft,
-    ImportDraftShotOccurrence,
-    ImportPropDraft,
-    ImportSceneDraft,
-)
 from app.models.studio_prompts_files_timeline import FileItem, PromptTemplate, TimelineClip
 from app.models.studio_file_usages import FileUsage
 from app.models.studio_projects import (
@@ -49,7 +42,6 @@ from app.models.types import (
     DialogueLineMode,
     FileType,
     FileUsageKind,
-    ImportDraftType,
     ProjectStyle,
     ProjectVisualStyle,
     PromptCategory,
@@ -76,7 +68,6 @@ __all__ = [
     "TimelineClipType",
     "DialogueLineMode",
     "VFXType",
-    "ImportDraftType",
     "PromptCategory",
     # Models
     "Project",
@@ -101,11 +92,6 @@ __all__ = [
     "ProjectSceneLink",
     "ProjectPropLink",
     "ProjectCostumeLink",
-    "ImportCharacterDraft",
-    "ImportSceneDraft",
-    "ImportPropDraft",
-    "ImportCostumeDraft",
-    "ImportDraftShotOccurrence",
     "PromptTemplate",
     "FileItem",
     "FileUsage",

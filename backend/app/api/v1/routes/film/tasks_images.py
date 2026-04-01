@@ -16,7 +16,7 @@ from app.chains.agents import (
 from app.core.db import async_session_maker
 from app.core.task_manager import DeliveryMode, SqlAlchemyTaskStore, TaskManager
 from app.core.task_manager.types import TaskStatus
-from app.dependencies import get_db, get_llm
+from app.dependencies import get_db, get_llm, get_nothinking_llm
 from app.models.studio import Shot, ShotDetail
 from app.models.studio import Chapter
 from app.models.task_links import GenerationTaskLink
@@ -40,7 +40,7 @@ router = APIRouter()
 )
 async def create_shot_frame_prompt_task(
     body: ShotFramePromptRequest,
-    llm: BaseChatModel = Depends(get_llm),
+    llm: BaseChatModel = Depends(get_nothinking_llm),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[TaskCreated]:
     frame_type = (body.frame_type or "").strip().lower()

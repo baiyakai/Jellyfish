@@ -3,9 +3,27 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Studio 角色草稿：不含 id，由导入 API 生成。
+ * Studio 角色草稿。
+ *
+ * 导入 API 未传 id 时由服务端生成；分镜详情回填时可带 character_id。
  */
 export type StudioCharacterDraft = {
+    /**
+     * 角色 ID（已落库时回填 character_id）
+     */
+    id?: (string | null);
+    /**
+     * 关联的文件 ID（可空）
+     */
+    file_id?: (string | null);
+    /**
+     * 缩略图下载地址（可空）
+     */
+    thumbnail?: (string | null);
+    /**
+     * 镜头内角色排序（shot_character_links.index）
+     */
+    index?: (number | null);
     /**
      * 角色名称（同项目内建议唯一）
      */
