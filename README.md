@@ -128,6 +128,35 @@ cp deploy/compose/.env.example deploy/compose/.env
 docker compose --env-file deploy/compose/.env -f deploy/compose/docker-compose.yml up -d mysql rustfs
 ```
 
+### Git 提交说明格式
+
+本地提交时，**首行**须符合：`[类型] 摘要`。`类型` 只能是下列**枚举之一**（**必须小写**），后接**一个空格**再写摘要：
+
+| 类型 | 含义 |
+|------|------|
+| `feat` | 新功能 |
+| `fix` | 缺陷 / Bug 修复 |
+| `docs` | 文档 |
+| `style` | 格式调整（不改变代码含义） |
+| `refactor` | 重构 |
+| `perf` | 性能优化 |
+| `test` | 测试 |
+| `chore` | 杂项 / 工具 / 非 src |
+| `ci` | CI 配置 |
+| `build` | 构建系统或依赖 |
+| `revert` | 回滚 |
+
+示例：`[feat] 新功能`、`[fix] 修复登录`、`[docs] 更新 README`。不可使用未在表中的类型（如 `[wip]`、`[update]`）。
+
+启用校验（在本仓库根目录执行一次即可）：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+说明：合并提交（`Merge …`）、`Revert …` 及合并流程中的提交会被钩子放行。
+
+**远端强制**：向默认分支发起的 Pull Request 会由 [`.github/workflows/commit-messages.yml`](.github/workflows/commit-messages.yml) 校验 PR 内每个提交的标题行（规则与上相同；`Merge` / `Revert` 开头跳过）。请在分支上把提交信息写成符合规范的格式后再推。
 
 ## 🚧 开发状态 / Roadmap
 

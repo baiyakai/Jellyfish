@@ -128,6 +128,36 @@ cp deploy/compose/.env.example deploy/compose/.env
 docker compose --env-file deploy/compose/.env -f deploy/compose/docker-compose.yml up -d mysql rustfs
 ```
 
+### Git commit message format
+
+The **first line** of each local commit must match: `[type] summary`. `type` must be **one of the following literals** (**lowercase only**), then **one space**, then the subject:
+
+| type | meaning |
+|------|---------|
+| `feat` | new feature |
+| `fix` | bug fix |
+| `docs` | documentation |
+| `style` | formatting (no semantic change) |
+| `refactor` | refactor |
+| `perf` | performance |
+| `test` | tests |
+| `chore` | chores / tooling |
+| `ci` | CI config |
+| `build` | build system or dependencies |
+| `revert` | revert |
+
+Examples: `[feat] add feature`, `[fix] repair login`, `[docs] update README`. Custom tags like `[wip]` are not allowed.
+
+Enable the hook once from the repository root:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Notes: merge commits (`Merge …`), `Revert …`, and commits created during a merge are allowed by the hook.
+
+**Remote enforcement**: pull requests run [`.github/workflows/commit-messages.yml`](.github/workflows/commit-messages.yml), which checks every commit subject in the PR (same rules; subjects starting with `Merge` / `Revert` are skipped). Push commits that match the format before opening or updating a PR.
+
 ## 🚧 Development status / Roadmap
 
 The project is **actively developed**. Below is the current completion and planned work. Feedback and contributions via [Issues](https://github.com/Forget-C/Jellyfish/issues) are welcome.
