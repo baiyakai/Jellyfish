@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FileTypeEnum(str, Enum):
@@ -41,6 +41,8 @@ class FileUsageWrite(BaseModel):
 
 
 class FileUsageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     file_id: str
     project_id: str
@@ -48,10 +50,6 @@ class FileUsageRead(BaseModel):
     shot_id: str | None
     usage_kind: str
     source_ref: str
-
-    class Config:
-        from_attributes = True
-
 
 class FileUpdate(BaseModel):
     name: str | None = None
@@ -61,14 +59,12 @@ class FileUpdate(BaseModel):
 
 
 class FileRead(FileBase):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FileDetailRead(FileRead):
     """含 file_usages 列表（详情接口）。"""
 
-    usages: list[FileUsageRead] = Field(default_factory=list)
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    usages: list[FileUsageRead] = Field(default_factory=list)

@@ -2,12 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApiResponse_list_ShotExtractedCandidateRead__ } from '../models/ApiResponse_list_ShotExtractedCandidateRead__';
 import type { ApiResponse_NoneType_ } from '../models/ApiResponse_NoneType_';
 import type { ApiResponse_PaginatedData_ShotLinkedAssetItem__ } from '../models/ApiResponse_PaginatedData_ShotLinkedAssetItem__';
 import type { ApiResponse_PaginatedData_ShotRead__ } from '../models/ApiResponse_PaginatedData_ShotRead__';
+import type { ApiResponse_ShotAssetsOverviewRead_ } from '../models/ApiResponse_ShotAssetsOverviewRead_';
+import type { ApiResponse_ShotExtractedCandidateRead_ } from '../models/ApiResponse_ShotExtractedCandidateRead_';
 import type { ApiResponse_ShotRead_ } from '../models/ApiResponse_ShotRead_';
 import type { ApiResponse_StudioScriptExtractionDraft_ } from '../models/ApiResponse_StudioScriptExtractionDraft_';
 import type { ShotCreate } from '../models/ShotCreate';
+import type { ShotExtractedCandidateLinkRequest } from '../models/ShotExtractedCandidateLinkRequest';
+import type { ShotSkipExtractionUpdate } from '../models/ShotSkipExtractionUpdate';
 import type { ShotUpdate } from '../models/ShotUpdate';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -90,6 +95,119 @@ export class StudioShotsService {
             url: '/api/v1/studio/shots/{shot_id}/extraction-draft',
             path: {
                 'shot_id': shotId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * 获取镜头提取候选项
+     * @returns ApiResponse_list_ShotExtractedCandidateRead__ Successful Response
+     * @throws ApiError
+     */
+    public static getShotExtractedCandidatesApiV1StudioShotsShotIdExtractedCandidatesGet({
+        shotId,
+    }: {
+        shotId: string,
+    }): CancelablePromise<ApiResponse_list_ShotExtractedCandidateRead__> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/studio/shots/{shot_id}/extracted-candidates',
+            path: {
+                'shot_id': shotId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * 获取镜头资产总览（已关联资产 + 提取候选）
+     * @returns ApiResponse_ShotAssetsOverviewRead_ Successful Response
+     * @throws ApiError
+     */
+    public static getShotAssetsOverviewApiApiV1StudioShotsShotIdAssetsOverviewGet({
+        shotId,
+    }: {
+        shotId: string,
+    }): CancelablePromise<ApiResponse_ShotAssetsOverviewRead_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/studio/shots/{shot_id}/assets-overview',
+            path: {
+                'shot_id': shotId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * 设置是否跳过镜头信息提取
+     * @returns ApiResponse_ShotRead_ Successful Response
+     * @throws ApiError
+     */
+    public static updateShotSkipExtractionApiV1StudioShotsShotIdSkipExtractionPatch({
+        shotId,
+        requestBody,
+    }: {
+        shotId: string,
+        requestBody: ShotSkipExtractionUpdate,
+    }): CancelablePromise<ApiResponse_ShotRead_> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/api/v1/studio/shots/{shot_id}/skip-extraction',
+            path: {
+                'shot_id': shotId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * 确认并关联镜头提取候选项
+     * @returns ApiResponse_ShotExtractedCandidateRead_ Successful Response
+     * @throws ApiError
+     */
+    public static linkExtractedCandidateApiV1StudioShotsExtractedCandidatesCandidateIdLinkPatch({
+        candidateId,
+        requestBody,
+    }: {
+        candidateId: number,
+        requestBody: ShotExtractedCandidateLinkRequest,
+    }): CancelablePromise<ApiResponse_ShotExtractedCandidateRead_> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/api/v1/studio/shots/extracted-candidates/{candidate_id}/link',
+            path: {
+                'candidate_id': candidateId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * 忽略镜头提取候选项
+     * @returns ApiResponse_ShotExtractedCandidateRead_ Successful Response
+     * @throws ApiError
+     */
+    public static ignoreExtractedCandidateApiV1StudioShotsExtractedCandidatesCandidateIdIgnorePatch({
+        candidateId,
+    }: {
+        candidateId: number,
+    }): CancelablePromise<ApiResponse_ShotExtractedCandidateRead_> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/api/v1/studio/shots/extracted-candidates/{candidate_id}/ignore',
+            path: {
+                'candidate_id': candidateId,
             },
             errors: {
                 422: `Validation Error`,

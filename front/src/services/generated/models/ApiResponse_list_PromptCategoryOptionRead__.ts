@@ -16,5 +16,9 @@ export type ApiResponse_list_PromptCategoryOptionRead__ = {
      * 实际数据
      */
     data?: (Array<PromptCategoryOptionRead> | null);
+    /**
+     * 附加元信息
+     */
+    meta?: (Record<string, any> | null);
 };
 

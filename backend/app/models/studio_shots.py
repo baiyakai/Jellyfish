@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -10,6 +12,8 @@ from app.models.types import (
     CameraMovement,
     CameraShotType,
     DialogueLineMode,
+    ShotCandidateStatus,
+    ShotCandidateType,
     ShotFrameType,
     ShotStatus,
     VFXType,
@@ -42,6 +46,17 @@ class Shot(Base,TimestampMixin):
         nullable=False,
         default=ShotStatus.pending,
         comment="镜头状态",
+    )
+    skip_extraction: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        comment="是否明确跳过信息提取；为 true 时可直接进入 ready 判定",
+    )
+    last_extracted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="最近一次完成信息提取的时间；用于区分未提取与提取结果为空",
     )
     script_excerpt: Mapped[str] = mapped_column(Text, nullable=False, default="", comment="剧本摘录")
     generated_video_file_id: Mapped[str | None] = mapped_column(
@@ -91,6 +106,12 @@ class Shot(Base,TimestampMixin):
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="ShotCharacterLink.index",
+    )
+    extracted_candidates: Mapped[list["ShotExtractedCandidate"]] = relationship(
+        back_populates="shot",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ShotExtractedCandidate.id",
     )
 
     __table_args__ = (
@@ -343,11 +364,76 @@ class ShotCharacterLink(Base,TimestampMixin):
     )
 
 
+class ShotExtractedCandidate(Base, TimestampMixin):
+    """镜头提取候选项。
+
+    用于记录一条镜头经“信息提取”后得到的候选资产及其确认状态：
+    - pending：待处理
+    - linked：已关联到真实实体
+    - ignored：已明确忽略
+    """
+
+    __tablename__ = "shot_extracted_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="候选项自增 ID")
+    shot_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("shots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="所属镜头 ID",
+    )
+    candidate_type: Mapped[ShotCandidateType] = mapped_column(
+        String(32),
+        nullable=False,
+        index=True,
+        comment="候选类型：character/scene/prop/costume",
+    )
+    candidate_name: Mapped[str] = mapped_column(String(255), nullable=False, comment="候选名称")
+    candidate_status: Mapped[ShotCandidateStatus] = mapped_column(
+        String(32),
+        nullable=False,
+        default=ShotCandidateStatus.pending,
+        index=True,
+        comment="候选确认状态：pending/linked/ignored",
+    )
+    linked_entity_id: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+        comment="已关联时对应的目标实体 ID",
+    )
+    source: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="extraction",
+        comment="候选来源，当前固定为 extraction",
+    )
+    payload: Mapped[dict] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+        comment="保留提取附加信息，如 description/thumbnail/file_id/confidence 等",
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="候选项被确认（关联/忽略）时间",
+    )
+
+    shot: Mapped["Shot"] = relationship(back_populates="extracted_candidates")
+
+    __table_args__ = (
+        UniqueConstraint("shot_id", "candidate_type", "candidate_name", name="uq_shot_candidate_name"),
+        Index("ix_shot_extracted_candidates_shot_type", "shot_id", "candidate_type"),
+    )
+
+
 __all__ = [
     "Shot",
     "ShotDetail",
     "ShotFrameImage",
     "ShotDialogLine",
     "ShotCharacterLink",
+    "ShotExtractedCandidate",
 ]
-

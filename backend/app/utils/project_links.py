@@ -7,6 +7,7 @@ from sqlalchemy import and_, case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.studio import Chapter, Project, Shot
+from app.services.common import entity_not_found, relation_mismatch
 
 
 AssetField = Literal["actor_id", "scene_id", "prop_id", "costume_id"]
@@ -14,7 +15,7 @@ AssetField = Literal["actor_id", "scene_id", "prop_id", "costume_id"]
 
 async def _ensure_project_exists(db: AsyncSession, project_id: str) -> None:
     if await db.get(Project, project_id) is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Project not found")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=entity_not_found("Project"))
 
 
 async def _ensure_chapter_optional(db: AsyncSession, *, project_id: str, chapter_id: str | None) -> None:
@@ -22,9 +23,9 @@ async def _ensure_chapter_optional(db: AsyncSession, *, project_id: str, chapter
         return
     chapter = await db.get(Chapter, chapter_id)
     if chapter is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Chapter not found")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=entity_not_found("Chapter"))
     if chapter.project_id != project_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="chapter_id does not belong to project_id")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=relation_mismatch("chapter_id", "project_id"))
 
 
 async def _ensure_shot_optional(db: AsyncSession, *, project_id: str, chapter_id: str | None, shot_id: str | None) -> None:
@@ -32,12 +33,12 @@ async def _ensure_shot_optional(db: AsyncSession, *, project_id: str, chapter_id
         return
     shot = await db.get(Shot, shot_id)
     if shot is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Shot not found")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=entity_not_found("Shot"))
     if chapter_id is not None and shot.chapter_id != chapter_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="shot_id does not belong to chapter_id")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=relation_mismatch("shot_id", "chapter_id"))
     chapter = await db.get(Chapter, shot.chapter_id)
     if chapter is None or chapter.project_id != project_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="shot_id does not belong to project_id")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=relation_mismatch("shot_id", "project_id"))
 
 
 async def upsert_project_link(
@@ -116,4 +117,3 @@ async def upsert_project_link(
     await db.flush()
     await db.refresh(obj)
     return obj
-

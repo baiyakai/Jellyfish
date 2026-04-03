@@ -1,17 +1,25 @@
 import { useState, useEffect } from 'react'
-import { Card, Button, Tag, Space, Table, Empty, Modal, Input, message } from 'antd'
-import type { TableColumnsType } from 'antd'
-import { PlusOutlined, VideoCameraOutlined } from '@ant-design/icons'
+import { Card, Button, Tag, Space, Table, Empty, Modal, Input, Dropdown, message } from 'antd'
+import type { MenuProps, TableColumnsType } from 'antd'
+import {
+  EditOutlined,
+  FileSearchOutlined,
+  MoreOutlined,
+  PlusOutlined,
+  ScissorOutlined,
+} from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { StudioChaptersService } from '../../../../../services/generated'
 import { chapterStatusMap } from '../constants'
-import { getChapterShotsPath } from '../routes'
+import { getChapterShotsPath, getChapterStudioPath } from '../routes'
 import { useChapters, newId, type Chapter } from '../hooks/useProjectData'
 import { ChapterRawTextEditorModal } from '../../../chapter/components/ChapterRawTextEditorModal'
 import { ensureHasShotsBeforeShooting } from '../ensureHasShotsBeforeShooting'
+import { getChapterPreparationState } from '../chapterPreparation'
 
 const { TextArea } = Input
 const CREATE_PARAM = 'create'
+const EDIT_PARAM = 'edit'
 
 export function ChaptersTab() {
   const navigate = useNavigate()
@@ -26,6 +34,7 @@ export function ChaptersTab() {
   const [createContent, setCreateContent] = useState('')
 
   const createParam = searchParams.get(CREATE_PARAM)
+  const editParam = searchParams.get(EDIT_PARAM)
   useEffect(() => {
     if (createParam === '1') {
       setCreateOpen(true)
@@ -40,9 +49,43 @@ export function ChaptersTab() {
     }
   }, [createParam, setSearchParams])
 
+  useEffect(() => {
+    if (!editParam) return
+    const target = chapters.find((chapter) => chapter.id === editParam)
+    if (!target) return
+    openEditModal(target)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete(EDIT_PARAM)
+        return next
+      },
+      { replace: true }
+    )
+  }, [chapters, editParam, setSearchParams])
+
   const openEditModal = (chapter: Chapter) => {
     setEditingChapter(chapter)
     setEditOpen(true)
+  }
+
+  const openCreateNextStep = (chapter: Chapter, hasRawText: boolean) => {
+    if (!projectId) return
+    Modal.confirm({
+      title: '章节创建成功',
+      content: hasRawText
+        ? '这一章已经有原文内容，接下来更适合直接提取分镜。'
+        : '这一章还没有原文内容，建议先补章节原文。',
+      okText: hasRawText ? '立即提取分镜' : '继续编辑原文',
+      cancelText: '稍后处理',
+      onOk: () => {
+        if (hasRawText) {
+          navigate(getChapterShotsPath(projectId, chapter.id))
+          return
+        }
+        openEditModal(chapter)
+      },
+    })
   }
 
   const handleCreateChapter = async () => {
@@ -53,14 +96,28 @@ export function ChaptersTab() {
     if (!projectId) return
     try {
       const nextIndex = Math.max(0, ...chapters.map((c) => c.index)) + 1
+      const createdId = newId('c')
+      const title = createTitle.trim()
+      const rawText = createContent
+      const draftChapter: Chapter = {
+        id: createdId,
+        projectId,
+        index: nextIndex,
+        title,
+        summary: '',
+        rawText,
+        storyboardCount: 0,
+        status: 'draft',
+        updatedAt: new Date().toISOString(),
+      }
       await StudioChaptersService.createChapterApiV1StudioChaptersPost({
         requestBody: {
-          id: newId('c'),
+          id: createdId,
           project_id: projectId,
           index: nextIndex,
-          title: createTitle.trim(),
+          title,
           summary: '',
-          raw_text: createContent || undefined,
+          raw_text: rawText || undefined,
           storyboard_count: 0,
           status: 'draft',
         },
@@ -70,6 +127,7 @@ export function ChaptersTab() {
       setCreateTitle('')
       setCreateContent('')
       await refresh()
+      openCreateNextStep(draftChapter, !!rawText.trim())
     } catch {
       message.error('创建章节失败')
     }
@@ -81,11 +139,78 @@ export function ChaptersTab() {
       message.warning('请输入章节标题')
       return
     }
+    if (!projectId) return
+    const nextIndex = Math.max(0, ...chapters.map((c) => c.index)) + 1
+    const createdId = newId('c')
+    const title = createTitle.trim()
+    const rawText = createContent
+    const draftChapter: Chapter = {
+      id: createdId,
+      projectId,
+      index: nextIndex,
+      title,
+      summary: '',
+      rawText,
+      storyboardCount: 0,
+      status: 'draft',
+      updatedAt: new Date().toISOString(),
+    }
     message.success('创建成功（Mock）')
     setCreateOpen(false)
     setCreateTitle('')
     setCreateContent('')
+    window.setTimeout(() => openCreateNextStep(draftChapter, !!rawText.trim()), 0)
     void refresh()
+  }
+
+  const handlePrimaryAction = (record: Chapter) => {
+    if (!projectId) return
+    const state = getChapterPreparationState(record)
+    if (state.key === 'edit_raw') {
+      openEditModal(record)
+      return
+    }
+    if (state.key === 'extract_shots') {
+      navigate(getChapterShotsPath(projectId, record.id))
+      return
+    }
+    if (state.key === 'prepare_shots') {
+      navigate(getChapterStudioPath(projectId, record.id))
+      return
+    }
+    void ensureHasShotsBeforeShooting({
+      projectId,
+      chapterId: record.id,
+      storyboardCount: record.storyboardCount,
+      navigate,
+    })
+  }
+
+  const buildActionMenuItems = (record: Chapter): MenuProps['items'] => {
+    if (!projectId) return []
+    const state = getChapterPreparationState(record)
+    return [
+      {
+        key: 'shots',
+        label: '查看分镜',
+        icon: <ScissorOutlined />,
+        onClick: () => navigate(getChapterShotsPath(projectId, record.id)),
+      },
+      state.key !== 'prepare_shots' && (record.storyboardCount ?? 0) > 0
+        ? {
+            key: 'studio',
+            label: '进入工作室',
+            icon: <FileSearchOutlined />,
+            onClick: () => navigate(getChapterStudioPath(projectId, record.id)),
+          }
+        : null,
+      {
+        key: 'raw',
+        label: '编辑原文',
+        icon: <EditOutlined />,
+        onClick: () => openEditModal(record),
+      },
+    ].filter(Boolean)
   }
 
   const columns: TableColumnsType<Chapter> = [
@@ -108,6 +233,20 @@ export function ChaptersTab() {
     },
     { title: '分镜数', dataIndex: 'storyboardCount', key: 'storyboardCount', width: 90 },
     {
+      title: '准备状态',
+      key: 'preparation',
+      width: 180,
+      render: (_, record) => {
+        const state = getChapterPreparationState(record)
+        return (
+          <div className="space-y-1">
+            <Tag color={state.color}>{state.text}</Tag>
+            <div className="text-[11px] text-gray-500 leading-5">{state.hint}</div>
+          </div>
+        )
+      },
+    },
+    {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
@@ -120,31 +259,24 @@ export function ChaptersTab() {
     {
       title: '操作',
       key: 'action',
-      width: 320,
+      width: 230,
       render: (_, record) => (
-        <Space>
+        <Space size={8}>
           <Button
-            type="link"
+            type="primary"
             size="small"
-            onClick={() => projectId && navigate(getChapterShotsPath(projectId, record.id))}
+            onClick={() => handlePrimaryAction(record)}
+            style={{ minWidth: 132, justifyContent: 'center' }}
+            icon={getChapterPreparationState(record).primaryIcon}
           >
-            分镜
+            {getChapterPreparationState(record).primaryAction}
           </Button>
-          <Button
-            type="link"
-            size="small"
-            icon={<VideoCameraOutlined />}
-            onClick={() =>
-              ensureHasShotsBeforeShooting({
-                projectId,
-                chapterId: record.id,
-                storyboardCount: record.storyboardCount,
-                navigate,
-              })
-            }
+          <Dropdown
+            trigger={['click']}
+            menu={{ items: buildActionMenuItems(record) }}
           >
-            进入拍摄
-          </Button>
+            <Button size="small" icon={<MoreOutlined />} aria-label="更多操作" />
+          </Dropdown>
         </Space>
       ),
     },

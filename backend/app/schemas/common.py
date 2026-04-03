@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,7 @@ class ApiResponse(BaseModel, Generic[T]):
     code: int = Field(200, description="与 HTTP 状态码一致")
     message: str = Field("success", description="提示信息")
     data: T | None = Field(None, description="实际数据")
+    meta: dict[str, Any] | None = Field(None, description="附加元信息")
 
 
 class Pagination(BaseModel):
@@ -38,9 +39,30 @@ def success_response(
     *,
     code: int = 200,
     message: str = "success",
+    meta: dict[str, Any] | None = None,
 ) -> ApiResponse[T]:
     """构造无分页的成功响应。"""
-    return ApiResponse(code=code, message=message, data=data)
+    return ApiResponse(code=code, message=message, data=data, meta=meta)
+
+
+def created_response(
+    data: T,
+    *,
+    message: str = "success",
+    meta: dict[str, Any] | None = None,
+) -> ApiResponse[T]:
+    """构造创建成功响应。"""
+    return success_response(data, code=201, message=message, meta=meta)
+
+
+def empty_response(
+    *,
+    code: int = 200,
+    message: str = "success",
+    meta: dict[str, Any] | None = None,
+) -> ApiResponse[None]:
+    """构造 data 为 null 的成功响应。"""
+    return ApiResponse(code=code, message=message, data=None, meta=meta)
 
 
 def paginated_response(
@@ -51,6 +73,7 @@ def paginated_response(
     total: int,
     code: int = 200,
     message: str = "success",
+    meta: dict[str, Any] | None = None,
 ) -> ApiResponse[PaginatedData[T]]:
     """构造有分页的成功响应。"""
     max_page = max(1, (total + page_size - 1) // page_size) if page_size > 0 else 1
@@ -61,7 +84,7 @@ def paginated_response(
         max_page=max_page,
     )
     payload = PaginatedData(items=items, pagination=pagination)
-    return ApiResponse(code=code, message=message, data=payload)
+    return ApiResponse(code=code, message=message, data=payload, meta=meta)
 
 
 def error_response(

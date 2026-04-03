@@ -16,5 +16,9 @@ export type ApiResponse_ProjectSceneLinkRead_ = {
      * 实际数据
      */
     data?: (ProjectSceneLinkRead | null);
+    /**
+     * 附加元信息
+     */
+    meta?: (Record<string, any> | null);
 };
 

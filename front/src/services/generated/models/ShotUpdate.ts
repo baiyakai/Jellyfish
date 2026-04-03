@@ -9,6 +9,7 @@ export type ShotUpdate = {
     title?: (string | null);
     thumbnail?: (string | null);
     status?: (ShotStatus | null);
+    skip_extraction?: (boolean | null);
     script_excerpt?: (string | null);
     generated_video_file_id?: (string | null);
 };

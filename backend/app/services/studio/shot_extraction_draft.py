@@ -30,7 +30,8 @@ from app.models.studio import (
     ShotDetail,
     ShotDialogLine,
 )
-from app.services.studio.entities import resolve_thumbnail_infos
+from app.services.common import entity_not_found
+from app.services.studio.entity_thumbnails import resolve_thumbnail_infos
 from app.schemas.skills.script_processing import (
     StudioAssetDraft,
     StudioCharacterDraft,
@@ -50,10 +51,10 @@ def _dialogue_line_mode_str(mode: Any) -> str:
 async def build_script_extraction_draft_for_shot(db: AsyncSession, shot_id: str) -> StudioScriptExtractionDraft:
     shot = await db.get(Shot, shot_id)
     if shot is None:
-        raise HTTPException(status_code=404, detail="Shot not found")
+        raise HTTPException(status_code=404, detail=entity_not_found("Shot"))
     chapter = await db.get(Chapter, shot.chapter_id)
     if chapter is None:
-        raise HTTPException(status_code=400, detail="Chapter not found for shot")
+        raise HTTPException(status_code=400, detail=f"{entity_not_found('Chapter')} for shot")
     project_id = chapter.project_id
     script_text = (chapter.condensed_text or chapter.raw_text or "").strip()
 

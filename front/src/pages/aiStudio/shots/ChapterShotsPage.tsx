@@ -21,8 +21,10 @@ import {
   ArrowLeftOutlined,
   DeleteOutlined,
   EditOutlined,
+  FileSearchOutlined,
   PlusOutlined,
   ReloadOutlined,
+  ScissorOutlined,
   VideoCameraOutlined,
 } from '@ant-design/icons'
 import type { ShotRead, ShotStatus } from '../../../services/generated'
@@ -50,6 +52,38 @@ function statusTag(status?: ShotStatus) {
   const color =
     status === 'ready' ? 'success' : status === 'generating' ? 'processing' : 'default'
   return <Tag color={color}>{status}</Tag>
+}
+
+type ShotPreparationState = {
+  text: string
+  color: string
+  hint: string
+}
+
+function getShotPreparationState(shot: ShotRead): ShotPreparationState {
+  if (shot.status === 'generating') {
+    return {
+      text: '生成中',
+      color: 'processing',
+      hint: '镜头相关生成任务仍在进行中',
+    }
+  }
+  if (shot.status === 'ready') {
+    return {
+      text: '已就绪',
+      color: 'green',
+      hint: shot.skip_extraction
+        ? '当前镜头已标记为无需提取，可继续进入视频生成流程'
+        : '信息提取已确认完成，可继续进入视频生成流程',
+    }
+  }
+  return {
+    text: '待确认',
+    color: 'gold',
+    hint: shot.skip_extraction
+      ? '当前镜头已标记为无需提取，等待系统同步最新流程状态'
+      : '请先完成信息提取确认，再进入视频生成流程',
+  }
 }
 
 export function ChapterShotsPage() {
@@ -274,6 +308,20 @@ export function ChapterShotsPage() {
         render: (_: unknown, r) => statusTag(r.status),
       },
       {
+        title: '准备度',
+        key: 'preparation',
+        width: 168,
+        render: (_: unknown, r) => {
+          const state = getShotPreparationState(r)
+          return (
+            <div className="space-y-1">
+              <Tag color={state.color}>{state.text}</Tag>
+              <div className="text-[11px] text-gray-500 leading-5">{state.hint}</div>
+            </div>
+          )
+        },
+      },
+      {
         title: '剧本摘录',
         dataIndex: 'script_excerpt',
         key: 'script_excerpt',
@@ -292,8 +340,7 @@ export function ChapterShotsPage() {
       {
         title: '操作',
         key: 'actions',
-        width: 148,
-        fixed: 'right',
+        width: 170,
         render: (_: unknown, r) => (
           <Space size={0} wrap>
             <Button
@@ -343,6 +390,8 @@ export function ChapterShotsPage() {
       <Empty description="没有匹配的分镜" image={Empty.PRESENTED_IMAGE_SIMPLE} />
     ) : undefined
 
+  const tableScrollY = 'calc(100vh - 320px)'
+
   if (!projectId || !chapterId) {
     return <Navigate to="/projects" replace />
   }
@@ -386,13 +435,21 @@ export function ChapterShotsPage() {
         </div>
 
         {shots.length > 0 ? (
-          <Button
-            type="primary"
-            icon={<VideoCameraOutlined />}
-            onClick={() => navigate(getChapterStudioPath(projectId, chapterId))}
-          >
-            进入拍摄
-          </Button>
+          <Space>
+            <Button
+              type="primary"
+              icon={<FileSearchOutlined />}
+              onClick={() => navigate(getChapterStudioPath(projectId, chapterId))}
+            >
+              进入分镜工作室
+            </Button>
+            <Button
+              icon={<VideoCameraOutlined />}
+              onClick={() => navigate(getChapterStudioPath(projectId, chapterId))}
+            >
+              继续当前镜头
+            </Button>
+          </Space>
         ) : null}
       </Header>
 
@@ -406,7 +463,16 @@ export function ChapterShotsPage() {
         }}
       >
         <Card
-          title="分镜"
+          title={
+            <div className="flex flex-wrap items-center gap-3">
+              <span>分镜</span>
+              {shots.length > 0 ? (
+                <Tag color="warning" className="!mr-0">
+                  当前章节已存在分镜，若要重新提取，请先删除现有分镜
+                </Tag>
+              ) : null}
+            </div>
+          }
           style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
           bodyStyle={{
             flex: 1,
@@ -435,11 +501,23 @@ export function ChapterShotsPage() {
                   </Popconfirm>
                 </>
               ) : null}
-              {shots.length === 0 ? (
-                <Button type="primary" loading={extracting} disabled={extracting} onClick={() => void handleOneClickExtract()}>
-                  一键提取
-                </Button>
-              ) : null}
+              <Tooltip
+                title={
+                  shots.length > 0 ? '已存在分镜时不允许同步分镜，需先清空分镜' : undefined
+                }
+              >
+                <span>
+                  <Button
+                    type={shots.length === 0 ? 'primary' : 'default'}
+                    icon={<ScissorOutlined />}
+                    loading={extracting}
+                    disabled={extracting || shots.length > 0}
+                    onClick={() => void handleOneClickExtract()}
+                  >
+                    {shots.length === 0 ? '一键提取分镜' : '重新提取需先清空分镜'}
+                  </Button>
+                </span>
+              </Tooltip>
               <Button icon={<PlusOutlined />} onClick={openCreate} loading={extracting} disabled={extracting}>
                 创建分镜
               </Button>
@@ -476,7 +554,7 @@ export function ChapterShotsPage() {
                 columns={columns}
                 dataSource={filteredShots}
                 pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100] }}
-                scroll={{ x: 'max-content', y: 'calc(100vh - 300px)' }}
+                scroll={{ x: 1180, y: tableScrollY }}
                 locale={{
                   emptyText: tableEmpty ?? <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />,
                 }}

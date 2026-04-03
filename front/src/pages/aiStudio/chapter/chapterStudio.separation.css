@@ -39,6 +39,17 @@
 .cs-left {
   background: var(--cs-left-bg) !important;
   border-right: 1px solid var(--cs-divider);
+  display: flex !important;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.cs-left > .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
 }
 
 .cs-main {
@@ -91,6 +102,15 @@
   color: var(--cs-text);
 }
 
+.cs-left-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* Shot list item */
 .cs-shot-item {
   position: relative;
@@ -118,6 +138,44 @@
 }
 .cs-shot-item.cs-shot-active {
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+}
+
+.cs-shot-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+}
+
+.cs-shot-progress__dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cs-shot-progress__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.cs-shot-progress__dot.is-on {
+  background: var(--cs-primary);
+  transform: scale(1.08);
+}
+
+.cs-shot-progress__text {
+  font-size: 11px;
+  color: var(--cs-text-3);
+  letter-spacing: 0.02em;
+}
+
+.cs-shot-hint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--cs-text-3);
 }
 
 .cs-dot {
@@ -195,6 +253,171 @@
   font-size: 12px;
 }
 
+.cs-readiness-card {
+  background:
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.08), transparent 32%),
+    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.cs-readiness-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(191, 219, 254, 0.9);
+  border-radius: 10px;
+  background: rgba(239, 246, 255, 0.82);
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.cs-readiness-status {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
+.cs-readiness-status__refresh {
+  flex-shrink: 0;
+  color: inherit;
+}
+
+.cs-readiness-status.is-fresh {
+  color: #0f766e;
+}
+
+.cs-readiness-status.is-cache {
+  color: #1d4ed8;
+}
+
+.cs-readiness-status.is-failed {
+  color: #b91c1c;
+}
+
+.cs-readiness-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: rgba(239, 246, 255, 0.78);
+}
+
+.cs-readiness-summary__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.cs-readiness-summary__desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.cs-readiness-summary__progress {
+  flex-shrink: 0;
+}
+
+.cs-readiness-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.cs-readiness-content.is-refreshing {
+  opacity: 0.72;
+  transition: opacity 140ms ease;
+}
+
+.cs-readiness-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+
+.cs-readiness-item.is-ready {
+  border-color: rgba(16, 185, 129, 0.22);
+  background: linear-gradient(180deg, rgba(236, 253, 245, 0.8) 0%, #fff 100%);
+}
+
+.cs-readiness-item.is-missing {
+  border-color: rgba(245, 158, 11, 0.24);
+  background: linear-gradient(180deg, rgba(255, 251, 235, 0.92) 0%, #fff 100%);
+}
+
+.cs-readiness-item__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cs-readiness-item__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.cs-readiness-item__meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.cs-readiness-item__importance {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #475569;
+}
+
+.cs-readiness-item__chips {
+  margin-top: 10px;
+}
+
+.cs-readiness-chip-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px 8px 0;
+}
+
+.cs-readiness-item__chips .ant-tag {
+  margin-bottom: 0;
+  margin-right: 0;
+}
+
+.cs-readiness-chip-meta {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.cs-readiness-tag-action {
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+}
+
+.cs-readiness-tag-action:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(245, 158, 11, 0.18);
+  opacity: 0.92;
+}
+
+.cs-readiness-item__empty {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
 /* Make controls breathe */
 .cs-studio .ant-tabs-left > .ant-tabs-nav {
   width: 120px;
@@ -239,4 +462,3 @@
   color: var(--cs-text-2);
   font-weight: 600;
 }
-

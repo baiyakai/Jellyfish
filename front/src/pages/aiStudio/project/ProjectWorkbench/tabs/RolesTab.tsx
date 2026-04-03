@@ -12,6 +12,11 @@ import { useProjectCharacters, newId } from '../hooks/useProjectData'
 import { resolveAssetUrl } from '../../../assets/utils'
 import { DisplayImageCard } from '../../../assets/components/DisplayImageCard'
 import { StudioEntitiesApi } from '../../../../../services/studioEntities'
+import {
+  PROJECT_STYLE_OPTIONS_BY_VISUAL,
+  ProjectVisualStyleAndStyleFields,
+  type ProjectVisualStyleChoice,
+} from '../../../project/ProjectVisualStyleAndStyleFields'
 
 type ActorLike = {
   id: string
@@ -46,18 +51,26 @@ export function RolesTab() {
   const [actorsById, setActorsById] = useState<Record<string, ActorLike>>({})
   const [costumesById, setCostumesById] = useState<Record<string, CostumeLike>>({})
   const [loadingLinks, setLoadingLinks] = useState(false)
-  const [projectVisualStyle, setProjectVisualStyle] = useState<string>('现实')
+  const [projectVisualStyle, setProjectVisualStyle] = useState<ProjectVisualStyleChoice>('现实')
+  const [projectStyle, setProjectStyle] = useState<string>(PROJECT_STYLE_OPTIONS_BY_VISUAL['现实'][0]?.value ?? '真人都市')
+  const [formVisualStyle, setFormVisualStyle] = useState<ProjectVisualStyleChoice>('现实')
+  const [formStyle, setFormStyle] = useState<string>(PROJECT_STYLE_OPTIONS_BY_VISUAL['现实'][0]?.value ?? '真人都市')
 
   useEffect(() => {
     const create = searchParams.get('create')
     const name = searchParams.get('name') ?? ''
     const desc = searchParams.get('desc') ?? ''
     const tab = searchParams.get('tab')
+    const visualStyle = (searchParams.get('visualStyle')?.trim() || '') as ProjectVisualStyleChoice | ''
+    const style = searchParams.get('style')?.trim() ?? ''
     if (create === '1' && tab === 'roles') {
       setFormName(name)
       setFormDesc(desc)
       setFormActorId(undefined)
       setFormCostumeId(undefined)
+      const nextVisual = visualStyle || projectVisualStyle
+      setFormVisualStyle(nextVisual)
+      setFormStyle(style || projectStyle || (PROJECT_STYLE_OPTIONS_BY_VISUAL[nextVisual]?.[0]?.value ?? '真人都市'))
       const shotIdFromUrl = searchParams.get('shotId')?.trim() ?? ''
       setPendingShotLinkShotId(shotIdFromUrl || null)
       setCreateOpen(true)
@@ -69,12 +82,14 @@ export function RolesTab() {
           next.delete('desc')
           next.delete('chapterId')
           next.delete('shotId')
+          next.delete('visualStyle')
+          next.delete('style')
           return next
         },
         { replace: true },
       )
     }
-  }, [searchParams, setSearchParams])
+  }, [projectStyle, projectVisualStyle, searchParams, setSearchParams])
 
   const openNormalRoleCreate = useCallback(() => {
     setPendingShotLinkShotId(null)
@@ -82,8 +97,10 @@ export function RolesTab() {
     setFormDesc('')
     setFormActorId(undefined)
     setFormCostumeId(undefined)
+    setFormVisualStyle(projectVisualStyle)
+    setFormStyle(projectStyle)
     setCreateOpen(true)
-  }, [])
+  }, [projectStyle, projectVisualStyle])
 
   const loadProjectLinks = async () => {
     if (!projectId) return
@@ -169,10 +186,10 @@ export function RolesTab() {
     void (async () => {
       try {
         const res = await StudioProjectsService.getProjectApiV1StudioProjectsProjectIdGet({ projectId })
-        const style = (res.data as any)?.visual_style
-        if (typeof style === 'string' && style.trim()) {
-          setProjectVisualStyle(style)
-        }
+        const nextVisual = (res.data?.visual_style as ProjectVisualStyleChoice | undefined) ?? '现实'
+        const nextStyle = (res.data?.style as string | undefined) ?? PROJECT_STYLE_OPTIONS_BY_VISUAL[nextVisual]?.[0]?.value ?? '真人都市'
+        setProjectVisualStyle(nextVisual)
+        setProjectStyle(nextStyle)
       } catch {
         // ignore: fallback to default
       }
@@ -197,7 +214,8 @@ export function RolesTab() {
         project_id: projectId,
         name,
         description: formDesc.trim() || undefined,
-        visual_style: projectVisualStyle || '现实',
+        visual_style: formVisualStyle || '现实',
+        style: formStyle,
         actor_id: formActorId,
         costume_id: formCostumeId ?? null,
       })
@@ -229,6 +247,8 @@ export function RolesTab() {
       setFormDesc('')
       setFormActorId(undefined)
       setFormCostumeId(undefined)
+      setFormVisualStyle(projectVisualStyle)
+      setFormStyle(projectStyle)
       setPendingShotLinkShotId(null)
       await refresh()
     } catch {
@@ -415,6 +435,16 @@ export function RolesTab() {
           <div>
             <div className="text-sm text-gray-600 mb-1">描述（可选）</div>
             <Input.TextArea rows={3} value={formDesc} onChange={(e) => setFormDesc(e.target.value)} />
+          </div>
+          <div>
+            <ProjectVisualStyleAndStyleFields
+              visual_style={formVisualStyle}
+              style={formStyle}
+              onChange={(next) => {
+                setFormVisualStyle(next.visual_style)
+                setFormStyle(next.style)
+              }}
+            />
           </div>
           <div>
             <div className="text-sm text-gray-600 mb-1">关联演员（必填）</div>

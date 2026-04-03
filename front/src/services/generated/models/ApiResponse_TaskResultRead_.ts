@@ -16,5 +16,9 @@ export type ApiResponse_TaskResultRead_ = {
      * 实际数据
      */
     data?: (TaskResultRead | null);
+    /**
+     * 附加元信息
+     */
+    meta?: (Record<string, any> | null);
 };
 

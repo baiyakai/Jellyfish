@@ -15,5 +15,9 @@ export type ApiResponse_dict_str__Any__ = {
      * 实际数据
      */
     data?: (Record<string, any> | null);
+    /**
+     * 附加元信息
+     */
+    meta?: (Record<string, any> | null);
 };
 

@@ -16,5 +16,9 @@ export type ApiResponse_ShotFrameImageRead_ = {
      * 实际数据
      */
     data?: (ShotFrameImageRead | null);
+    /**
+     * 附加元信息
+     */
+    meta?: (Record<string, any> | null);
 };
 

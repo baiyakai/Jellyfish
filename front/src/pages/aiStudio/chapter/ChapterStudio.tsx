@@ -9,6 +9,8 @@ import {
   Input,
   Layout,
   Modal,
+  Popconfirm,
+  Progress,
   Radio,
   Segmented,
   Select,
@@ -59,8 +61,10 @@ import { useParams, Link } from 'react-router-dom'
 import {
   FilmService,
   StudioChaptersService,
+  StudioEntitiesService,
   StudioFilesService,
   StudioImageTasksService,
+  StudioProjectsService,
   StudioShotCharacterLinksService,
   StudioShotDetailsService,
   StudioShotDialogLinesService,
@@ -74,10 +78,13 @@ import type {
   CameraMovement,
   CameraShotType,
   ChapterRead,
+  EntityNameExistenceItem,
   ProjectActorLinkRead,
   ProjectCostumeLinkRead,
   ShotDetailRead,
   ShotDialogLineRead,
+  ShotExtractedCandidateRead,
+  ShotAssetsOverviewRead,
   ShotFrameImageRead,
   ShotCharacterLinkRead,
   ProjectPropLinkRead,
@@ -109,7 +116,7 @@ function normalizeFrameExclusiveTags(tags: string[]): string[] {
 }
 
 type InspectorMode = 'push' | 'overlay'
-type ShotFilter = 'all' | 'pending' | 'ready' | 'hidden' | 'problem'
+type ShotFilter = 'all' | 'pendingConfirm' | 'generating' | 'ready' | 'hidden' | 'problem'
 
 type StudioShot = ShotRead & {
   hidden?: boolean
@@ -136,6 +143,8 @@ type KeyframeCardState = {
   applyingFileId: string | null
 }
 
+type InspectorTabKey = 'ops' | 'camera' | 'prompt_image' | 'dialogue' | 'keyframe_gen'
+
 const LAYOUT_STORAGE_KEY = 'jellyfish_chapter_studio_layout_v1'
 type PromptFrameType = 'first' | 'key' | 'last'
 
@@ -151,6 +160,24 @@ function reorder<T>(list: T[], startIndex: number, endIndex: number) {
   const result = [...list]
   const [removed] = result.splice(startIndex, 1)
   result.splice(endIndex, 0, removed)
+  return result
+}
+
+function normalizeAssetName(value?: string | null) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
+function uniqueNames(values: Array<string | null | undefined>) {
+  const seen = new Set<string>()
+  const result: string[] = []
+  values.forEach((value) => {
+    const raw = String(value ?? '').trim()
+    if (!raw) return
+    const key = normalizeAssetName(raw)
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    result.push(raw)
+  })
   return result
 }
 
@@ -256,6 +283,8 @@ const ChapterStudio: React.FC = () => {
     chapterId?: string
   }>()
   const [chapter, setChapter] = useState<Chapter | null>(null)
+  const [projectVisualStyle, setProjectVisualStyle] = useState<'现实' | '动漫'>('现实')
+  const [projectStyle, setProjectStyle] = useState<string>('真人都市')
   const [shots, setShots] = useState<StudioShot[]>([])
   const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
   const [selectedShotIds, setSelectedShotIds] = useState<string[]>([])
@@ -268,6 +297,8 @@ const ChapterStudio: React.FC = () => {
   const [propLinks, setPropLinks] = useState<ProjectPropLinkRead[]>([])
   const [costumeLinks, setCostumeLinks] = useState<ProjectCostumeLinkRead[]>([])
   const [shotCharacterLinks, setShotCharacterLinks] = useState<ShotCharacterLinkRead[]>([])
+  const [shotCandidateItems, setShotCandidateItems] = useState<ShotExtractedCandidateRead[]>([])
+  const shotCandidatesRequestSeqRef = useRef(0)
   const [shotDurations, setShotDurations] = useState<Record<string, number>>({})
   const [loadingShots, setLoadingShots] = useState(true)
   const [loadingDetail, setLoadingDetail] = useState(false)
@@ -357,7 +388,7 @@ const ChapterStudio: React.FC = () => {
           ...s,
           hidden: hiddenIds.has(s.id),
           hasProblem: idx === 4,
-          hasSpeech: true,
+          hasSpeech: false,
           hasMusic: idx % 3 !== 0,
         }))
 
@@ -419,13 +450,24 @@ const ChapterStudio: React.FC = () => {
   const loadChapter = async () => {
     if (!chapterId) return
     try {
-      const res = await StudioChaptersService.getChapterApiV1StudioChaptersChapterIdGet({ chapterId })
-      const data = res.data
+      const [chapterRes, projectRes] = await Promise.all([
+        StudioChaptersService.getChapterApiV1StudioChaptersChapterIdGet({ chapterId }),
+        projectId ? StudioProjectsService.getProjectApiV1StudioProjectsProjectIdGet({ projectId }) : Promise.resolve(null),
+      ])
+      const data = chapterRes.data
       if (!data) {
         setChapter(null)
         return
       }
       setChapter(toUIChapter(data))
+      const nextVisualStyle = projectRes?.data?.visual_style
+      const nextStyle = projectRes?.data?.style
+      if (nextVisualStyle === '现实' || nextVisualStyle === '动漫') {
+        setProjectVisualStyle(nextVisualStyle)
+      }
+      if (typeof nextStyle === 'string' && nextStyle.trim()) {
+        setProjectStyle(nextStyle)
+      }
     } catch {
       // 章节信息仅用于标题展示，失败不阻断工作台
       setChapter(null)
@@ -440,6 +482,7 @@ const ChapterStudio: React.FC = () => {
 
   useEffect(() => {
     if (!selectedShotId) {
+      shotCandidatesRequestSeqRef.current += 1
       setShotDetail(null)
       setDialogLines([])
       setFrameImages([])
@@ -448,9 +491,12 @@ const ChapterStudio: React.FC = () => {
       setPropLinks([])
       setCostumeLinks([])
       setShotCharacterLinks([])
+      setShotCandidateItems([])
       return
     }
     setLoadingDetail(true)
+    const reqSeq = ++shotCandidatesRequestSeqRef.current
+    setShotCandidateItems([])
     Promise.all([
       StudioShotDetailsService.getShotDetailApiV1StudioShotDetailsShotIdGet({ shotId: selectedShotId }).then((r: any) => r.data ?? null),
       StudioShotDialogLinesService.listShotDialogLinesApiV1StudioShotDialogLinesGet({
@@ -515,8 +561,12 @@ const ChapterStudio: React.FC = () => {
       StudioShotCharacterLinksService.listShotCharacterLinksApiV1StudioShotCharacterLinksGet({
         shotId: selectedShotId,
       }).then((r: any) => (r.data ?? []) as ShotCharacterLinkRead[]),
+      StudioShotsService.getShotExtractedCandidatesApiV1StudioShotsShotIdExtractedCandidatesGet({
+        shotId: selectedShotId,
+      }).then((r) => r.data ?? []),
     ])
-      .then(([detail, dialogs, frames, scenes, actors, props, costumes, shotCharacters]) => {
+      .then(([detail, dialogs, frames, scenes, actors, props, costumes, shotCharacters, candidates]) => {
+        if (reqSeq !== shotCandidatesRequestSeqRef.current) return
         setShotDetail(detail)
         lastSavedDetailRef.current = detail
         setDialogLines(dialogs)
@@ -526,12 +576,19 @@ const ChapterStudio: React.FC = () => {
         setPropLinks(props)
         setCostumeLinks(costumes)
         setShotCharacterLinks(shotCharacters)
+        setShotCandidateItems(candidates as ShotExtractedCandidateRead[])
         if (detail?.duration != null) {
           setShotDurations((prev) => ({ ...prev, [selectedShotId]: detail.duration ?? 0 }))
         }
       })
-      .catch(() => message.error('加载分镜详情失败'))
-      .finally(() => setLoadingDetail(false))
+      .catch(() => {
+        if (reqSeq !== shotCandidatesRequestSeqRef.current) return
+        message.error('加载分镜详情失败')
+      })
+      .finally(() => {
+        if (reqSeq !== shotCandidatesRequestSeqRef.current) return
+        setLoadingDetail(false)
+      })
   }, [selectedShotId])
 
   useEffect(() => {
@@ -651,6 +708,17 @@ const ChapterStudio: React.FC = () => {
     setCostumeLinks(costumes)
   }
 
+  const loadShotCandidateItems = useCallback(async (shotId: string) => {
+    try {
+      const res = await StudioShotsService.getShotExtractedCandidatesApiV1StudioShotsShotIdExtractedCandidatesGet({
+        shotId,
+      })
+      setShotCandidateItems(res.data ?? [])
+    } catch {
+      setShotCandidateItems([])
+    }
+  }, [])
+
   const updatePromptProps = async (propIds: string[]) => {
     if (!selectedShotId || !projectId) return
     const next = Array.from(new Set(propIds.map((x) => x.trim()).filter(Boolean)))
@@ -666,6 +734,7 @@ const ChapterStudio: React.FC = () => {
         ),
       )
       await refreshPromptAssetLinks(selectedShotId)
+      await loadShotCandidateItems(selectedShotId)
     } catch {
       message.error('更新道具失败')
     } finally {
@@ -688,6 +757,7 @@ const ChapterStudio: React.FC = () => {
         ),
       )
       await refreshPromptAssetLinks(selectedShotId)
+      await loadShotCandidateItems(selectedShotId)
     } catch {
       message.error('更新服装失败')
     } finally {
@@ -713,6 +783,7 @@ const ChapterStudio: React.FC = () => {
         })
       }
       await refreshPromptAssetLinks(selectedShotId)
+      await loadShotCandidateItems(selectedShotId)
       patchShotDetailLocal({ scene_id: nextSceneId || null })
     } catch {
       message.error('更新场景失败')
@@ -744,6 +815,7 @@ const ChapterStudio: React.FC = () => {
       )
       const refreshed = await StudioShotCharacterLinksService.listShotCharacterLinksApiV1StudioShotCharacterLinksGet({ shotId: selectedShotId })
       setShotCharacterLinks((refreshed.data ?? []) as ShotCharacterLinkRead[])
+      await loadShotCandidateItems(selectedShotId)
     } catch {
       message.error('更新角色失败')
     } finally {
@@ -1104,6 +1176,45 @@ const ChapterStudio: React.FC = () => {
     return 'cs-pending'
   }
 
+  const getShotReadinessFlags = useCallback((shot: StudioShot) => {
+    const isReady = !shot.hidden && shot.status === 'ready'
+    const isGenerating = !shot.hidden && shot.status === 'generating'
+    const isPendingConfirm = !shot.hidden && shot.status === 'pending'
+    const hasProblem = Boolean(shot.hasProblem)
+    const missing: string[] = []
+    if (isPendingConfirm) missing.push('待确认')
+    if (isGenerating) missing.push('生成中')
+    return {
+      isReady,
+      isGenerating,
+      isPendingConfirm,
+      hasProblem,
+      missing,
+    }
+  }, [])
+
+  const getShotProgressCount = useCallback(
+    (shot: StudioShot) => {
+      return [shot.status !== 'pending', shot.status === 'ready'].filter(Boolean).length
+    },
+    [getShotReadinessFlags],
+  )
+
+  const getShotPrimaryHint = useCallback(
+    (shot: StudioShot) => {
+      const flags = getShotReadinessFlags(shot)
+      if (flags.hasProblem) return '存在待处理问题'
+      if (flags.isGenerating) return '镜头相关生成任务进行中'
+      if (flags.isPendingConfirm) {
+        return shot.skip_extraction
+          ? '已标记无需提取，等待系统完成流程状态同步'
+          : '请先完成信息提取确认'
+      }
+      return '镜头已具备视频生成前置条件'
+    },
+    [getShotReadinessFlags],
+  )
+
   const chapterTitle = useMemo(() => {
     if (!chapter) return '章节拍摄工作台'
     return `第${chapter.index}章 · ${chapter.title.replace(/^第\d+[集章：:\s]*/g, '').trim() || chapter.title}`
@@ -1112,10 +1223,12 @@ const ChapterStudio: React.FC = () => {
   const filteredShots = useMemo(() => {
     const list = shots.slice().sort((a, b) => a.index - b.index)
     switch (filter) {
-      case 'pending':
-        return list.filter((s) => !s.hidden && s.status !== 'ready')
+      case 'pendingConfirm':
+        return list.filter((s) => getShotReadinessFlags(s).isPendingConfirm)
+      case 'generating':
+        return list.filter((s) => getShotReadinessFlags(s).isGenerating)
       case 'ready':
-        return list.filter((s) => !s.hidden && s.status === 'ready')
+        return list.filter((s) => getShotReadinessFlags(s).isReady)
       case 'hidden':
         return list.filter((s) => Boolean(s.hidden))
       case 'problem':
@@ -1123,7 +1236,19 @@ const ChapterStudio: React.FC = () => {
       default:
         return list
     }
-  }, [filter, shots])
+  }, [filter, getShotReadinessFlags, shots])
+
+  const shotFilterCounts = useMemo(() => {
+    const list = shots.slice()
+    return {
+      all: list.length,
+      pendingConfirm: list.filter((s) => getShotReadinessFlags(s).isPendingConfirm).length,
+      generating: list.filter((s) => getShotReadinessFlags(s).isGenerating).length,
+      ready: list.filter((s) => getShotReadinessFlags(s).isReady).length,
+      hidden: list.filter((s) => Boolean(s.hidden)).length,
+      problem: list.filter((s) => !s.hidden && Boolean(s.hasProblem)).length,
+    } satisfies Record<ShotFilter, number>
+  }, [getShotReadinessFlags, shots])
 
   const multiToolbarVisible = selectedShotIds.length > 1
 
@@ -1151,15 +1276,18 @@ const ChapterStudio: React.FC = () => {
   }
 
   const matchesFilter = (s: StudioShot, f: ShotFilter) => {
+    const flags = getShotReadinessFlags(s)
     switch (f) {
-      case 'pending':
-        return !s.hidden && s.status !== 'ready'
+      case 'pendingConfirm':
+        return flags.isPendingConfirm
+      case 'generating':
+        return flags.isGenerating
       case 'ready':
-        return !s.hidden && s.status === 'ready'
+        return flags.isReady
       case 'hidden':
         return Boolean(s.hidden)
       case 'problem':
-        return !s.hidden && Boolean(s.hasProblem)
+        return !s.hidden && flags.hasProblem
       default:
         return true
     }
@@ -1571,11 +1699,12 @@ const ChapterStudio: React.FC = () => {
                 value={filter}
                 onChange={(v) => setFilter(v as ShotFilter)}
                 options={[
-                  { label: '全部', value: 'all' },
-                  { label: '未完成', value: 'pending' },
-                  { label: '已生成', value: 'ready' },
-                  { label: '隐藏', value: 'hidden' },
-                  { label: '有问题', value: 'problem' },
+                  { label: `全部 ${shotFilterCounts.all}`, value: 'all' },
+                  { label: `待确认 ${shotFilterCounts.pendingConfirm}`, value: 'pendingConfirm' },
+                  { label: `生成中 ${shotFilterCounts.generating}`, value: 'generating' },
+                  { label: `已就绪 ${shotFilterCounts.ready}`, value: 'ready' },
+                  { label: `隐藏 ${shotFilterCounts.hidden}`, value: 'hidden' },
+                  { label: `有问题 ${shotFilterCounts.problem}`, value: 'problem' },
                 ]}
               />
             </div>
@@ -1604,7 +1733,7 @@ const ChapterStudio: React.FC = () => {
             </div>
           )}
 
-          <div className="flex-1 min-h-0 overflow-auto px-3 pb-3">
+          <div className="cs-left-scroll px-3 pb-3">
             {loadingShots ? (
               <div className="text-gray-500 text-center py-4">加载中...</div>
             ) : (
@@ -1614,6 +1743,9 @@ const ChapterStudio: React.FC = () => {
                   const isSelected = selectedShotIds.includes(s.id)
                   const isDragging = draggingShotId === s.id
                   const isDragOver = dragOverShotId === s.id && draggingShotId && draggingShotId !== s.id
+                  const readiness = getShotReadinessFlags(s)
+                  const progressCount = getShotProgressCount(s)
+                  const primaryHint = getShotPrimaryHint(s)
                   return (
                     <div
                       key={s.id}
@@ -1713,8 +1845,36 @@ const ChapterStudio: React.FC = () => {
                                 {shotDetail?.movement ? `${CAMERA_MOVEMENT_OPTIONS.find((x) => x.value === shotDetail.movement)?.label ?? shotDetail.movement} · ` : ''}
                                 {((shotDurations[s.id] ?? shotDetail?.duration ?? 0) || 0).toFixed(1)}s
                               </div>
+                              <div className="cs-shot-progress mt-1">
+                                <div className="cs-shot-progress__dots" aria-hidden="true">
+                                  {[0, 1].map((idx) => (
+                                    <span
+                                      key={idx}
+                                      className={[
+                                        'cs-shot-progress__dot',
+                                        idx < progressCount ? 'is-on' : '',
+                                      ].join(' ')}
+                                    />
+                                  ))}
+                                </div>
+                                <span className="cs-shot-progress__text">{progressCount}/2</span>
+                              </div>
+                              <div className="cs-shot-hint mt-1">
+                                {primaryHint}
+                              </div>
                               <div className="mt-1 flex flex-wrap gap-1 items-center">
-                                {s.hasSpeech && <Tag icon={<FileTextOutlined />} className="m-0" color="default">说话</Tag>}
+                                {readiness.isReady ? (
+                                  <Tag className="m-0" color="success">已就绪</Tag>
+                                ) : readiness.isGenerating ? (
+                                  <Tag className="m-0" color="processing">生成中</Tag>
+                                ) : (
+                                  <Tag className="m-0" color="gold">待确认</Tag>
+                                )}
+                                {s.skip_extraction && (
+                                  <Tag className="m-0" color="cyan">
+                                    无需提取
+                                  </Tag>
+                                )}
                                 {s.hasMusic && <Tag icon={<SoundOutlined />} className="m-0" color="default">音乐</Tag>}
                                 {statusTag(s.status)}
                                 {s.hidden && <Tag icon={<EyeInvisibleOutlined />} className="m-0">隐藏</Tag>}
@@ -2041,7 +2201,10 @@ const ChapterStudio: React.FC = () => {
               }}
             >
               <Inspector
-                projectId={projectId}
+                    projectId={projectId}
+                chapterId={chapterId}
+                projectVisualStyle={projectVisualStyle}
+                projectStyle={projectStyle}
                 loadingDetail={loadingDetail}
                 shotDetail={shotDetail}
                 dialogLines={dialogLines}
@@ -2050,6 +2213,7 @@ const ChapterStudio: React.FC = () => {
                 propLinks={propLinks}
                 costumeLinks={costumeLinks}
                 shotCharacterLinks={shotCharacterLinks}
+                shotCandidateItems={shotCandidateItems}
                 cameraUpdating={cameraUpdating}
                 promptAssetsUpdating={promptAssetsUpdating}
                 onAddDialogLine={addDialogLine}
@@ -2062,10 +2226,12 @@ const ChapterStudio: React.FC = () => {
                 onUpdateShotTitle={updateShotTitleInOps}
                 onUpdateShotScriptExcerpt={updateShotScriptExcerptInOps}
                 onDeleteShotOps={deleteShotFromOps}
+                onPatchShotList={patchShotInList}
                 onPatchShotDetail={patchShotDetailLocal}
                 onPatchShotDetailImmediate={patchShotDetailImmediate}
                 onSelectPreviewVideo={setPreviewVideoFileId}
                 onRefreshShotFrameImages={refreshShotFrameImages}
+                onLoadShotCandidateItems={loadShotCandidateItems}
                 onClose={() => setPrefs((p) => ({ ...p, inspectorOpen: false }))}
               />
             </Sider>
@@ -2106,6 +2272,9 @@ const ChapterStudio: React.FC = () => {
                 <div className="flex-1 min-w-0 overflow-hidden">
                   <Inspector
                     projectId={projectId}
+                    chapterId={chapterId}
+                    projectVisualStyle={projectVisualStyle}
+                    projectStyle={projectStyle}
                     loadingDetail={loadingDetail}
                     shotDetail={shotDetail}
                     dialogLines={dialogLines}
@@ -2114,6 +2283,7 @@ const ChapterStudio: React.FC = () => {
                     propLinks={propLinks}
                     costumeLinks={costumeLinks}
                     shotCharacterLinks={shotCharacterLinks}
+                    shotCandidateItems={shotCandidateItems}
                     cameraUpdating={cameraUpdating}
                     promptAssetsUpdating={promptAssetsUpdating}
                     onAddDialogLine={addDialogLine}
@@ -2126,10 +2296,12 @@ const ChapterStudio: React.FC = () => {
                     onUpdateShotTitle={updateShotTitleInOps}
                     onUpdateShotScriptExcerpt={updateShotScriptExcerptInOps}
                     onDeleteShotOps={deleteShotFromOps}
+                    onPatchShotList={patchShotInList}
                     onPatchShotDetail={patchShotDetailLocal}
                     onPatchShotDetailImmediate={patchShotDetailImmediate}
                     onSelectPreviewVideo={setPreviewVideoFileId}
                     onRefreshShotFrameImages={refreshShotFrameImages}
+                    onLoadShotCandidateItems={loadShotCandidateItems}
                     onClose={() => setPrefs((p) => ({ ...p, inspectorOpen: false }))}
                   />
                 </div>
@@ -2157,6 +2329,9 @@ export default ChapterStudio
 
 function Inspector(props: {
   projectId?: string
+  chapterId?: string
+  projectVisualStyle: '现实' | '动漫'
+  projectStyle: string
   loadingDetail: boolean
   shotDetail: ShotDetailRead | null
   dialogLines: ShotDialogLineRead[]
@@ -2165,6 +2340,7 @@ function Inspector(props: {
   propLinks: ProjectPropLinkRead[]
   costumeLinks: ProjectCostumeLinkRead[]
   shotCharacterLinks: ShotCharacterLinkRead[]
+  shotCandidateItems: ShotExtractedCandidateRead[]
   cameraUpdating: boolean
   promptAssetsUpdating: boolean
   onAddDialogLine: (text: string) => Promise<void>
@@ -2177,15 +2353,20 @@ function Inspector(props: {
   onUpdateShotTitle: (shotId: string, title: string) => Promise<void>
   onUpdateShotScriptExcerpt: (shotId: string, script_excerpt: string) => Promise<void>
   onDeleteShotOps: (shotId: string) => Promise<void>
+  onPatchShotList: (shotId: string, patch: Partial<StudioShot>) => void
   onClose: () => void
   onPatchShotDetail: (patch: Partial<ShotDetailRead>) => void
   onPatchShotDetailImmediate: (patch: Partial<ShotDetailRead>) => Promise<void>
   onSelectPreviewVideo: (fileId: string) => void
   /** 下拉展开时拉取最新分镜帧图，用于「参考」关键帧类型选项动态更新 */
   onRefreshShotFrameImages?: () => Promise<void>
+  onLoadShotCandidateItems: (shotId: string) => Promise<void>
 }) {
   const {
     projectId,
+    chapterId,
+    projectVisualStyle,
+    projectStyle,
     loadingDetail,
     shotDetail,
     dialogLines,
@@ -2194,6 +2375,7 @@ function Inspector(props: {
     propLinks,
     costumeLinks,
     shotCharacterLinks,
+    shotCandidateItems,
     cameraUpdating,
     promptAssetsUpdating,
     onAddDialogLine,
@@ -2206,12 +2388,15 @@ function Inspector(props: {
     onUpdateShotTitle,
     onUpdateShotScriptExcerpt,
     onDeleteShotOps,
+    onPatchShotList,
     onClose,
     onPatchShotDetail,
     onPatchShotDetailImmediate,
     onSelectPreviewVideo,
     onRefreshShotFrameImages,
+    onLoadShotCandidateItems,
   } = props
+  const currentChapterId = chapterId ?? null
   const [imageVersion, setImageVersion] = useState('v1')
   const [refImageType, setRefImageType] = useState<string | undefined>(undefined)
   const [refFrameTypeSelectLoading, setRefFrameTypeSelectLoading] = useState(false)
@@ -2220,7 +2405,7 @@ function Inspector(props: {
   const [hideShot, setHideShot] = useState(false)
   const [newDialogText, setNewDialogText] = useState('')
   const [creatingDialog, setCreatingDialog] = useState(false)
-  const [inspectorTabKey, setInspectorTabKey] = useState('camera')
+  const [inspectorTabKey, setInspectorTabKey] = useState<InspectorTabKey>('camera')
   const [sceneNameMap, setSceneNameMap] = useState<Record<string, string>>({})
   const [characterNameMap, setCharacterNameMap] = useState<Record<string, string>>({})
   const [linkRoleOpen, setLinkRoleOpen] = useState(false)
@@ -2232,7 +2417,22 @@ function Inspector(props: {
   const [shotLinkedAssets, setShotLinkedAssets] = useState<
     Array<{ type: string; id: string; name?: string; thumbnail?: string; image_id?: number | null }>
   >([])
+  const [shotAssetsOverview, setShotAssetsOverview] = useState<ShotAssetsOverviewRead | null>(null)
+  const shotAssetsOverviewRequestSeqRef = useRef(0)
   const [shotRenderPromptLoading, setShotRenderPromptLoading] = useState(false)
+  const [shotExtractStatus, setShotExtractStatus] = useState<{
+    source: 'idle'
+    updatedAt: number | null
+    message: string
+  }>({
+    source: 'idle',
+    updatedAt: null,
+    message: '',
+  })
+  const [readinessExistenceMap, setReadinessExistenceMap] = useState<Record<string, EntityNameExistenceItem>>({})
+  const [readinessExistenceLoading, setReadinessExistenceLoading] = useState(false)
+  const [readinessCandidateActionIds, setReadinessCandidateActionIds] = useState<Record<number, boolean>>({})
+  const [skipExtractionUpdating, setSkipExtractionUpdating] = useState(false)
 
   const [linkSceneOpen, setLinkSceneOpen] = useState(false)
   const [linkSceneLoading, setLinkSceneLoading] = useState(false)
@@ -2275,6 +2475,22 @@ function Inspector(props: {
   const showAvTab = false
   const showGenRefParams = false
   const showGenRefVersions = false
+
+  const getInspectorTabForSelectedShot = useCallback(
+    (shot: StudioShot | null): InspectorTabKey => {
+      if (!shot) return 'camera'
+      if (shot.hasProblem) return 'ops'
+      if (!(shot.script_excerpt ?? '').trim() || shot.status !== 'ready') return 'prompt_image'
+      if (!shot.hasSpeech) return 'dialogue'
+      if (shot.status === 'ready') return 'keyframe_gen'
+      return 'camera'
+    },
+    [],
+  )
+
+  useEffect(() => {
+    setInspectorTabKey(getInspectorTabForSelectedShot(selectedShot))
+  }, [getInspectorTabForSelectedShot, selectedShot?.id])
 
   useEffect(() => {
     setHideShot(Boolean(selectedShot?.hidden))
@@ -2436,6 +2652,46 @@ function Inspector(props: {
     }
   }, [selectedShot?.id])
 
+  const loadShotAssetsOverview = useCallback(
+    async (shotId: string) => {
+      const reqSeq = ++shotAssetsOverviewRequestSeqRef.current
+      try {
+        const res = await StudioShotsService.getShotAssetsOverviewApiApiV1StudioShotsShotIdAssetsOverviewGet({
+          shotId,
+        })
+        if (reqSeq !== shotAssetsOverviewRequestSeqRef.current) return
+        setShotAssetsOverview(res.data ?? null)
+      } catch {
+        if (reqSeq !== shotAssetsOverviewRequestSeqRef.current) return
+        setShotAssetsOverview(null)
+      }
+    },
+    [],
+  )
+
+  useEffect(() => {
+    if (!selectedShot?.id) {
+      shotAssetsOverviewRequestSeqRef.current += 1
+      setShotAssetsOverview(null)
+      return
+    }
+    void loadShotAssetsOverview(selectedShot.id)
+  }, [loadShotAssetsOverview, selectedShot?.id, shotCandidateItems])
+
+  useEffect(() => {
+    if (!selectedShot?.id) {
+      setShotExtractStatus({ source: 'idle', updatedAt: null, message: '' })
+      return
+    }
+    setShotExtractStatus({
+      source: 'idle',
+      updatedAt: null,
+      message: '待确认候选请前往分镜编辑页提取或刷新。',
+    })
+  }, [
+    selectedShot?.id,
+  ])
+
   const linkedAssetThumbByKey = useMemo(() => {
     const map = new Map<string, string>()
     shotLinkedAssets.forEach((it) => {
@@ -2444,6 +2700,208 @@ function Inspector(props: {
     })
     return map
   }, [shotLinkedAssets])
+
+  const promptAssetReadiness = useMemo(() => {
+    if (selectedShot?.skip_extraction) {
+      return {
+        checks: [] as Array<{
+          key: 'characters' | 'scene' | 'props' | 'costumes'
+          label: string
+          importance: string
+          entries: Array<{ id: number; name: string; status: ShotExtractedCandidateRead['candidate_status'] }>
+          missing: string[]
+          expectedCount: number
+          actualCount: number
+          ignoredCount: number
+          resolvedCount: number
+          ready: boolean
+        }>,
+        expectedChecks: [] as Array<{
+          key: 'characters' | 'scene' | 'props' | 'costumes'
+          label: string
+          importance: string
+          entries: Array<{ id: number; name: string; status: ShotExtractedCandidateRead['candidate_status'] }>
+          missing: string[]
+          expectedCount: number
+          actualCount: number
+          ignoredCount: number
+          resolvedCount: number
+          ready: boolean
+        }>,
+        readyCount: 1,
+        totalCount: 1,
+        percent: 100,
+        hasMissing: false,
+      }
+    }
+    const overviewItems = shotAssetsOverview?.items ?? []
+    const bucket = (type: 'character' | 'scene' | 'prop' | 'costume') =>
+      overviewItems.filter((item) => item.type === type)
+
+    const checks = [
+      {
+        key: 'characters' as const,
+        label: '角色',
+        importance: '影响人物一致性、关键帧参考图和画面主体描述。',
+        candidates: bucket('character'),
+      },
+      {
+        key: 'scene' as const,
+        label: '场景',
+        importance: '影响镜头环境描述、视频提示词和整体空间连续性。',
+        candidates: bucket('scene'),
+      },
+      {
+        key: 'props' as const,
+        label: '道具',
+        importance: '影响关键动作细节，缺失时容易让画面叙事元素不完整。',
+        candidates: bucket('prop'),
+      },
+      {
+        key: 'costumes' as const,
+        label: '服装',
+        importance: '影响角色外观连续性，尤其在多镜头或生成多版本时更明显。',
+        candidates: bucket('costume'),
+      },
+    ].map((item) => {
+      const entries = item.candidates.map((candidate) => ({
+        id: candidate.candidate_id ?? -1,
+        name: candidate.name,
+        status: candidate.candidate_status ?? (candidate.is_linked ? 'linked' : 'pending'),
+      }))
+      const pending = entries.filter((entry) => entry.status === 'pending')
+      const linked = entries.filter((entry) => entry.status === 'linked')
+      const ignored = entries.filter((entry) => entry.status === 'ignored')
+      return {
+        ...item,
+        entries,
+        missing: pending.map((entry) => entry.name),
+        expectedCount: entries.length,
+        actualCount: linked.length,
+        ignoredCount: ignored.length,
+        resolvedCount: linked.length + ignored.length,
+        ready: entries.length === 0 || pending.length === 0,
+      }
+    })
+
+    const expectedChecks = checks.filter((item) => item.expectedCount > 0)
+    const readyCount = expectedChecks.filter((item) => item.ready).length
+    return {
+      checks,
+      expectedChecks,
+      readyCount,
+      totalCount: expectedChecks.length,
+      percent: expectedChecks.length === 0 ? 100 : Math.round((readyCount / expectedChecks.length) * 100),
+      hasMissing: expectedChecks.some((item) => item.missing.length > 0),
+    }
+  }, [selectedShot?.skip_extraction, shotAssetsOverview?.items])
+
+  useEffect(() => {
+    if (!projectId || !selectedShot?.id) {
+      setReadinessExistenceMap({})
+      return
+    }
+
+    const overviewItems = shotAssetsOverview?.items ?? []
+    const characterNames = uniqueNames(
+      overviewItems.filter((item) => item.type === 'character' && item.candidate_status === 'pending').map((item) => item.name),
+    )
+    const sceneNames = uniqueNames(
+      overviewItems.filter((item) => item.type === 'scene' && item.candidate_status === 'pending').map((item) => item.name),
+    )
+    const propNames = uniqueNames(
+      overviewItems.filter((item) => item.type === 'prop' && item.candidate_status === 'pending').map((item) => item.name),
+    )
+    const costumeNames = uniqueNames(
+      overviewItems.filter((item) => item.type === 'costume' && item.candidate_status === 'pending').map((item) => item.name),
+    )
+
+    if (characterNames.length === 0 && sceneNames.length === 0 && propNames.length === 0 && costumeNames.length === 0) {
+      setReadinessExistenceMap({})
+      return
+    }
+
+    let cancelled = false
+    setReadinessExistenceLoading(true)
+    void (async () => {
+      try {
+        const res = await StudioEntitiesService.checkEntityNamesExistenceApiV1StudioEntitiesExistenceCheckPost({
+          requestBody: {
+            project_id: projectId,
+            shot_id: selectedShot.id,
+            character_names: characterNames,
+            scene_names: sceneNames,
+            prop_names: propNames,
+            costume_names: costumeNames,
+          },
+        })
+        if (cancelled) return
+        const data = res.data
+        const next: Record<string, EntityNameExistenceItem> = {}
+        ;(data?.characters ?? []).forEach((item) => {
+          next[`characters:${normalizeAssetName(item.name)}`] = item
+        })
+        ;(data?.scenes ?? []).forEach((item) => {
+          next[`scene:${normalizeAssetName(item.name)}`] = item
+        })
+        ;(data?.props ?? []).forEach((item) => {
+          next[`props:${normalizeAssetName(item.name)}`] = item
+        })
+        ;(data?.costumes ?? []).forEach((item) => {
+          next[`costumes:${normalizeAssetName(item.name)}`] = item
+        })
+        setReadinessExistenceMap(next)
+      } catch {
+        if (!cancelled) setReadinessExistenceMap({})
+      } finally {
+        if (!cancelled) setReadinessExistenceLoading(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    projectId,
+    selectedShot?.id,
+    shotAssetsOverview?.items,
+  ])
+
+  const getReadinessExistenceLabel = useCallback((checkKey: 'characters' | 'scene' | 'props' | 'costumes', name: string) => {
+    const item = readinessExistenceMap[`${checkKey}:${normalizeAssetName(name)}`]
+    if (!item) {
+      return readinessExistenceLoading ? '检测中' : null
+    }
+    if (!item.exists) return '需新建'
+    if (item.linked_to_project && !item.linked_to_shot) return '项目内可关联'
+    if (!item.linked_to_project) return '资产库已有'
+    if (item.linked_to_shot) return '已关联'
+    return null
+  }, [readinessExistenceLoading, readinessExistenceMap])
+
+
+  const promptAssetReadinessNote = useMemo(() => {
+    if (!selectedShot) return '请先选择一个分镜。'
+    if (selectedShot.skip_extraction) return '当前分镜已明确标记为无需提取，系统会直接按“提取确认已完成”处理。'
+    if (!shotAssetsOverview) return '当前还没有拿到这条分镜的资产总览，暂时无法展示候选确认状态。'
+    return '这里优先依据后端 assets-overview 的统一结果，展示已关联资产与待确认候选的并集状态；提取与刷新统一在分镜编辑页处理。'
+  }, [selectedShot, shotAssetsOverview])
+
+  const shotExtractStatusText = useMemo(() => {
+    if (!shotExtractStatus.message) return ''
+    if (!shotExtractStatus.updatedAt) return shotExtractStatus.message
+    const time = new Date(shotExtractStatus.updatedAt).toLocaleTimeString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+    return `${shotExtractStatus.message} · ${time}`
+  }, [shotExtractStatus])
+
+  const goToShotEditForAssets = useCallback(() => {
+    if (!projectId || !currentChapterId || !selectedShot?.id) return
+    window.location.assign(`/projects/${projectId}/chapters/${currentChapterId}/shots/${selectedShot.id}/edit`)
+  }, [currentChapterId, projectId, selectedShot?.id])
 
   const extractFileIdFromThumbnail = useCallback((thumbnail?: string | null): string | null => {
     const v = (thumbnail || '').trim()
@@ -2667,6 +3125,111 @@ function Inspector(props: {
       if (kind === 'costume') setLinkCostumeLoading(false)
     }
   }
+
+  const openReadinessLinker = useCallback(
+    async (kind: 'characters' | 'scene' | 'props' | 'costumes') => {
+      if (!selectedShot?.id) return
+      if (kind === 'characters') {
+        setInspectorTabKey('keyframe_gen')
+        setLinkRoleSelectedIds([])
+        setLinkRoleOpen(true)
+        await loadProjectRoleOptions()
+        return
+      }
+      if (kind === 'scene') {
+        setInspectorTabKey('keyframe_gen')
+        setLinkSceneOpen(true)
+        await loadProjectAssetOptions('scene')
+        return
+      }
+      if (kind === 'props') {
+        setInspectorTabKey('keyframe_gen')
+        setLinkPropSelectedIds([])
+        setLinkPropOpen(true)
+        await loadProjectAssetOptions('prop')
+        return
+      }
+      setInspectorTabKey('keyframe_gen')
+      setLinkCostumeSelectedIds([])
+      setLinkCostumeOpen(true)
+      await loadProjectAssetOptions('costume')
+    },
+    [loadProjectAssetOptions, loadProjectRoleOptions, selectedShot?.id],
+  )
+
+  const openReadinessCreate = useCallback((kind: 'characters' | 'scene' | 'props' | 'costumes', name: string) => {
+    if (!projectId || !selectedShot?.id) return
+    const currentShotId = selectedShot.id
+    const styleQ =
+      `&visualStyle=${encodeURIComponent(projectVisualStyle)}` +
+      `&style=${encodeURIComponent(projectStyle)}`
+    const ctxQ =
+      `&projectId=${encodeURIComponent(projectId)}` +
+      `&chapterId=${encodeURIComponent(currentChapterId ?? '')}` +
+      `&shotId=${encodeURIComponent(currentShotId)}` +
+      styleQ
+    const open = (url: string) => window.open(url, '_blank', 'noopener,noreferrer')
+    if (kind === 'characters') {
+      open(`/projects/${encodeURIComponent(projectId)}?tab=roles&create=1&name=${encodeURIComponent(name)}${ctxQ}`)
+      return
+    }
+    const tab = kind === 'scene' ? 'scene' : kind === 'props' ? 'prop' : 'costume'
+    open(`/assets?tab=${tab}&create=1&name=${encodeURIComponent(name)}${ctxQ}`)
+  }, [currentChapterId, projectId, projectStyle, projectVisualStyle, selectedShot?.id])
+
+  const handleReadinessMissingAction = useCallback(async (kind: 'characters' | 'scene' | 'props' | 'costumes', name: string) => {
+    const item = readinessExistenceMap[`${kind}:${normalizeAssetName(name)}`]
+    if (item && !item.exists) {
+      openReadinessCreate(kind, name)
+      return
+    }
+    await openReadinessLinker(kind)
+  }, [openReadinessCreate, openReadinessLinker, readinessExistenceMap])
+
+  const toggleSkipExtraction = useCallback(async () => {
+    if (!selectedShot?.id) return
+    const nextSkip = !(selectedShot.skip_extraction ?? false)
+    setSkipExtractionUpdating(true)
+    try {
+      const res = await StudioShotsService.updateShotSkipExtractionApiV1StudioShotsShotIdSkipExtractionPatch({
+        shotId: selectedShot.id,
+        requestBody: { skip: nextSkip },
+      })
+      if (res.data) {
+        onPatchShotList(selectedShot.id, res.data as Partial<StudioShot>)
+      } else {
+        onPatchShotList(selectedShot.id, { skip_extraction: nextSkip })
+      }
+      await onLoadShotCandidateItems(selectedShot.id)
+      await loadShotAssetsOverview(selectedShot.id)
+      message.success(nextSkip ? '已标记为无需提取' : '已恢复提取确认流程')
+    } catch {
+      message.error(nextSkip ? '标记无需提取失败' : '恢复提取失败')
+    } finally {
+      setSkipExtractionUpdating(false)
+    }
+  }, [loadShotAssetsOverview, onLoadShotCandidateItems, onPatchShotList, selectedShot?.id, selectedShot?.skip_extraction])
+
+  const ignoreReadinessCandidate = useCallback(
+    async (candidateId: number) => {
+      if (!selectedShot?.id) return
+      if (readinessCandidateActionIds[candidateId]) return
+      setReadinessCandidateActionIds((prev) => ({ ...prev, [candidateId]: true }))
+      try {
+        await StudioShotsService.ignoreExtractedCandidateApiV1StudioShotsExtractedCandidatesCandidateIdIgnorePatch({
+          candidateId,
+        })
+        await onLoadShotCandidateItems(selectedShot.id)
+        await loadShotAssetsOverview(selectedShot.id)
+        message.success('已忽略该候选项')
+      } catch {
+        message.error('忽略候选项失败')
+      } finally {
+        setReadinessCandidateActionIds((prev) => ({ ...prev, [candidateId]: false }))
+      }
+    },
+    [loadShotAssetsOverview, onLoadShotCandidateItems, readinessCandidateActionIds, selectedShot?.id],
+  )
 
   useEffect(() => {
     if (sceneIds.length === 0) {
@@ -3125,7 +3688,7 @@ function Inspector(props: {
         <Tabs
           tabPosition="left"
           activeKey={inspectorTabKey}
-          onChange={setInspectorTabKey}
+          onChange={(activeKey) => setInspectorTabKey(activeKey as InspectorTabKey)}
           items={[
             {
               key: 'ops',
@@ -3306,26 +3869,198 @@ function Inspector(props: {
               label: '画面描述',
               children: (
                 <div>
+                  <div className="cs-group cs-readiness-card">
+                    <div className="cs-group-title">
+                      <CheckCircleOutlined /> 资产就绪度
+                    </div>
+                    <div className="cs-readiness-note">
+                      {promptAssetReadinessNote}
+                    </div>
+                    {selectedShot ? (
+                      <div className="mt-3">
+                        {selectedShot.skip_extraction ? (
+                          <Button
+                            size="small"
+                            loading={skipExtractionUpdating}
+                            onClick={() => void toggleSkipExtraction()}
+                          >
+                            恢复提取
+                          </Button>
+                        ) : (
+                          <Popconfirm
+                            title="确认标记为无需提取？"
+                            description="标记后当前镜头会直接按“提取确认已完成”处理。"
+                            okText="确认"
+                            cancelText="取消"
+                            onConfirm={() => void toggleSkipExtraction()}
+                            okButtonProps={{ danger: true, loading: skipExtractionUpdating }}
+                            cancelButtonProps={{ disabled: skipExtractionUpdating }}
+                          >
+                            <Button
+                              size="small"
+                              danger
+                              loading={skipExtractionUpdating}
+                            >
+                              无需提取
+                            </Button>
+                          </Popconfirm>
+                        )}
+                      </div>
+                    ) : null}
+                    {shotExtractStatusText ? (
+                      <div className={`cs-readiness-status is-${shotExtractStatus.source}`}>
+                        <span>{shotExtractStatusText}</span>
+                        <Tooltip title="前往分镜编辑页处理提取与确认">
+                          <Button
+                            type="text"
+                            size="small"
+                            className="cs-readiness-status__refresh"
+                            icon={<EditOutlined />}
+                            onClick={goToShotEditForAssets}
+                          />
+                        </Tooltip>
+                      </div>
+                    ) : null}
+
+                    {!selectedShot ? (
+                      <div className="text-xs text-gray-400 mt-3">请先选择一个分镜。</div>
+                    ) : selectedShot.skip_extraction ? (
+                      <div className="space-y-4 mt-3">
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4">
+                          <div className="text-sm font-medium text-emerald-800">当前分镜已标记为无需提取</div>
+                          <div className="text-xs text-emerald-700 mt-1">
+                            系统会直接按“提取确认已完成”处理，这条分镜可以继续进入后续生成流程。
+                          </div>
+                        </div>
+                      </div>
+                    ) : !shotAssetsOverview ? (
+                      <div className="text-xs text-gray-400 mt-3">当前分镜还没有可用的资产总览数据，请前往分镜编辑页处理提取与确认。</div>
+                    ) : (
+                      <div className="space-y-4 mt-3">
+                        <div className="cs-readiness-summary">
+                          <div>
+                            <div className="cs-readiness-summary__title">
+                              {promptAssetReadiness.hasMissing ? '已提取到候选资产，但还有部分未关联' : '提取到的主要资产已完成关联'}
+                            </div>
+                            <div className="cs-readiness-summary__desc">
+                              已完成 {promptAssetReadiness.readyCount}/{promptAssetReadiness.totalCount || 0} 项关键资产确认
+                            </div>
+                          </div>
+                          <div className="cs-readiness-summary__progress">
+                            <Progress
+                              type="circle"
+                              size={68}
+                              percent={promptAssetReadiness.percent}
+                              strokeColor={promptAssetReadiness.hasMissing ? '#f59e0b' : '#10b981'}
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <Button type="primary" icon={<EditOutlined />} onClick={goToShotEditForAssets}>
+                            去分镜编辑确认
+                          </Button>
+                        </div>
+
+                        <div className="cs-readiness-grid">
+                          {promptAssetReadiness.checks.map((item) => (
+                            <div key={item.key} className={`cs-readiness-item ${item.ready ? 'is-ready' : 'is-missing'}`}>
+                              <div className="cs-readiness-item__header">
+                                <span className="cs-readiness-item__label">{item.label}</span>
+                                <Tag color={item.ready ? 'success' : item.expectedCount === 0 ? 'default' : 'warning'}>
+                                  {item.expectedCount === 0 ? '无候选' : item.ready ? '已就绪' : `待处理 ${item.missing.length}`}
+                                </Tag>
+                              </div>
+                              <div className="cs-readiness-item__meta">
+                                提取到 {item.expectedCount} 项，已关联 {item.actualCount} 项，已忽略 {item.ignoredCount} 项
+                              </div>
+                              <div className="cs-readiness-item__importance">
+                                {item.importance}
+                              </div>
+                              {item.expectedCount > 0 ? (
+                                <div className="cs-readiness-item__chips">
+                                  {item.entries.map((entry) => {
+                                    const missing = entry.status === 'pending'
+                                    const ignored = entry.status === 'ignored'
+                                    const existenceLabel = missing
+                                      ? getReadinessExistenceLabel(item.key as 'characters' | 'scene' | 'props' | 'costumes', entry.name)
+                                      : null
+                                    return (
+                                      <span key={entry.id} className="cs-readiness-chip-wrap">
+                                        <Tag
+                                          color={missing ? 'orange' : ignored ? 'default' : 'green'}
+                                          className={missing ? 'cs-readiness-tag-action' : undefined}
+                                          onClick={missing ? () => void handleReadinessMissingAction(item.key as 'characters' | 'scene' | 'props' | 'costumes', entry.name) : undefined}
+                                        >
+                                          {missing ? `待处理：${entry.name}` : ignored ? `已忽略：${entry.name}` : entry.name}
+                                        </Tag>
+                                        {missing ? (
+                                          <Button
+                                            size="small"
+                                            type="text"
+                                            danger
+                                            className="!px-1"
+                                            loading={!!readinessCandidateActionIds[entry.id]}
+                                            onClick={() => void ignoreReadinessCandidate(entry.id)}
+                                          >
+                                            忽略
+                                          </Button>
+                                        ) : null}
+                                        {missing && existenceLabel ? (
+                                          <span className="cs-readiness-chip-meta">{existenceLabel}</span>
+                                        ) : null}
+                                      </span>
+                                    )
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="cs-readiness-item__empty">当前分镜的剧本提取结果里还没有这类候选资产</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="cs-group">
                     <div className="cs-group-title">
-                      <PictureOutlined /> 画面要素
+                      <PictureOutlined /> 氛围描述
                     </div>
-                    <div className="space-y-4">
-                      <div>
-                        <div className="text-gray-500 text-xs mb-1">角色</div>
-                        <Select
-                          mode="multiple"
-                          placeholder="多选当前镜头角色"
-                          className="w-full"
-                          value={Array.from(new Set(shotCharacterLinks.map((x) => x.character_id)))}
-                          onChange={(vals) => void onUpdatePromptActors((vals as Array<string | number>).map((v) => String(v)))}
-                          disabled={promptAssetsUpdating}
-                          optionLabelProp="label"
-                          options={characterIds.map((id) => ({ value: id, label: characterNameMap[id] ?? id }))}
+                    <div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-gray-500 text-xs">氛围描述</div>
+                          <Switch
+                            size="small"
+                            checked={shotDetail?.follow_atmosphere ?? false}
+                            onChange={(v) => onPatchShotDetail({ follow_atmosphere: v })}
+                          />
+                        </div>
+                        <TextArea
+                          rows={3}
+                          placeholder="氛围描述…（可选跟随画面）"
+                          value={shotDetail?.atmosphere ?? ''}
+                          onChange={(e) => onPatchShotDetail({ atmosphere: e.target.value })}
                         />
-                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              ),
+            },
+            {
+              key: 'dialogue',
+              label: '对白',
+              children: (
+                <div>
+                  <div className="cs-group">
+                    <div className="cs-group-title">
+                      <SoundOutlined /> 对白编辑
+                    </div>
+                    <div className="cs-hint">这里单独处理当前镜头对白，避免和资产关联、画面描述混在一起。</div>
+                    <div className="space-y-4 mt-3">
                       <div>
-                        <div className="text-gray-500 text-xs mb-1">对白（说话人 + 富文本占位）</div>
+                        <div className="text-gray-500 text-xs mb-1">新增对白</div>
                         <Space.Compact className="w-full">
                           <Select
                             size="small"
@@ -3356,8 +4091,12 @@ function Inspector(props: {
                             }}
                           />
                         </Space.Compact>
-                        {dialogLines.length > 0 && (
-                          <div className="mt-2 space-y-1">
+                      </div>
+
+                      <div>
+                        <div className="text-gray-500 text-xs mb-2">当前对白</div>
+                        {dialogLines.length > 0 ? (
+                          <div className="space-y-1">
                             {dialogLines.slice().sort((a, b) => (a.index ?? 0) - (b.index ?? 0)).map((l) => (
                               <div key={l.id} className="flex items-center gap-2">
                                 <div className="text-xs text-gray-600 truncate flex-1 min-w-0">{l.text}</div>
@@ -3386,27 +4125,12 @@ function Inspector(props: {
                               </div>
                             ))}
                           </div>
+                        ) : (
+                          <div className="text-xs text-gray-400">当前镜头还没有对白。</div>
                         )}
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <div className="text-gray-500 text-xs">氛围描述</div>
-                          <Switch
-                            size="small"
-                            checked={shotDetail?.follow_atmosphere ?? false}
-                            onChange={(v) => onPatchShotDetail({ follow_atmosphere: v })}
-                          />
-                        </div>
-                        <TextArea
-                          rows={3}
-                          placeholder="氛围描述…（可选跟随画面）"
-                          value={shotDetail?.atmosphere ?? ''}
-                          onChange={(e) => onPatchShotDetail({ atmosphere: e.target.value })}
-                        />
                       </div>
                     </div>
                   </div>
-
                 </div>
               ),
             },

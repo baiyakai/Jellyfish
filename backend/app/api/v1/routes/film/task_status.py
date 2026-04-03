@@ -12,7 +12,8 @@ from app.core.task_manager.types import TaskStatus
 from app.dependencies import get_db
 from app.models.task import GenerationTask
 from app.models.task_links import GenerationTaskLink
-from app.schemas.common import ApiResponse, PaginatedData, paginated_response, success_response
+from app.schemas.common import ApiResponse, PaginatedData, created_response, empty_response, paginated_response, success_response
+from app.services.common import entity_not_found
 
 from .common import TaskLinkAdoptRead, TaskLinkAdoptRequest, TaskResultRead, TaskStatusRead, ensure_single_bind_target
 
@@ -72,7 +73,7 @@ async def get_task_status(
     store = SqlAlchemyTaskStore(db)
     view = await store.get_status_view(task_id)
     if view is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail=entity_not_found("Task"))
     return success_response(TaskStatusRead(task_id=view.id, status=view.status, progress=view.progress))
 
 
@@ -87,7 +88,7 @@ async def get_task_result(
 ) -> ApiResponse[TaskResultRead]:
     row = await db.get(GenerationTask, task_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail=entity_not_found("Task"))
     status_value = row.status.value if hasattr(row.status, "value") else str(row.status)
     return success_response(
         TaskResultRead(
@@ -121,7 +122,7 @@ async def adopt_task_link(
     link = result.scalars().first()
 
     if link is None:
-        raise HTTPException(status_code=404, detail="Task link not found")
+        raise HTTPException(status_code=404, detail=entity_not_found("Task link"))
 
     if str(link.status) == "accepted":
         raise HTTPException(
@@ -210,7 +211,7 @@ async def create_task_link(
     db.add(link)
     await db.flush()
     await db.refresh(link)
-    return success_response(GenerationTaskLinkRead.model_validate(link), code=201)
+    return created_response(GenerationTaskLinkRead.model_validate(link))
 
 
 @router.get(
@@ -224,7 +225,7 @@ async def get_task_link(
 ) -> ApiResponse[GenerationTaskLinkRead]:
     link = await db.get(GenerationTaskLink, link_id)
     if link is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task link not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=entity_not_found("Task link"))
     return success_response(GenerationTaskLinkRead.model_validate(link))
 
 
@@ -240,7 +241,7 @@ async def update_task_link(
 ) -> ApiResponse[GenerationTaskLinkRead]:
     link = await db.get(GenerationTaskLink, link_id)
     if link is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task link not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=entity_not_found("Task link"))
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(link, k, v)
     await db.flush()
@@ -259,8 +260,7 @@ async def delete_task_link(
 ) -> ApiResponse[None]:
     link = await db.get(GenerationTaskLink, link_id)
     if link is None:
-        return success_response(None)
+        return empty_response()
     await db.delete(link)
     await db.flush()
-    return success_response(None)
-
+    return empty_response()

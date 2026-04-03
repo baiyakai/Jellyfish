@@ -39,6 +39,23 @@ class ShotStatus(str, Enum):
     ready = "ready"
 
 
+class ShotCandidateType(str, Enum):
+    """镜头提取候选类型。"""
+
+    character = "character"
+    scene = "scene"
+    prop = "prop"
+    costume = "costume"
+
+
+class ShotCandidateStatus(str, Enum):
+    """镜头提取候选确认状态。"""
+
+    pending = "pending"
+    linked = "linked"
+    ignored = "ignored"
+
+
 class CameraShotType(str, Enum):
     """景别（与 `app.schemas.skills.common.ShotType` 对齐，存英文 code）。"""
 
@@ -184,4 +201,3 @@ class PromptCategory(str, Enum):
     costume_image_front = "costume_image_front"
     costume_image_other = "costume_image_other"
     combined = "combined"
-

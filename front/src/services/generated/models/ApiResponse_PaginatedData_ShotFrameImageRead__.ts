@@ -16,5 +16,9 @@ export type ApiResponse_PaginatedData_ShotFrameImageRead__ = {
      * 实际数据
      */
     data?: (PaginatedData_ShotFrameImageRead_ | null);
+    /**
+     * 附加元信息
+     */
+    meta?: (Record<string, any> | null);
 };
 

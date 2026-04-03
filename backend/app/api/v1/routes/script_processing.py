@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.chains.agents import (
@@ -36,12 +34,19 @@ from app.chains.agents.script_processing_agents import (
     StudioScriptExtractionDraft,
 )
 from app.dependencies import get_db, get_llm, get_nothinking_llm
-from app.models.studio import CameraAngle, CameraMovement, CameraShotType, Chapter, Shot, ShotDetail, VFXType
 from app.schemas.common import ApiResponse, success_response
 from app.schemas.skills.character_portrait import CharacterPortraitAnalysisResult
 from app.schemas.skills.costume_info_analysis import CostumeInfoAnalysisResult
 from app.schemas.skills.prop_info_analysis import PropInfoAnalysisResult
 from app.schemas.skills.scene_info_analysis import SceneInfoAnalysisResult
+from app.services.common import required_field
+from app.services.script_extraction_cache import (
+    build_script_extract_cache_key,
+    get_cached_script_extract,
+    set_cached_script_extract,
+)
+from app.services.studio.script_division import write_division_result_to_chapter
+from app.services.studio import sync_shot_extracted_candidates_from_draft
 
 logger = logging.getLogger(__name__)
 
@@ -95,46 +100,12 @@ async def divide_script(
 
         if request.write_to_db:
             if not request.chapter_id:
-                raise HTTPException(status_code=400, detail="chapter_id is required when write_to_db=true")
-
-            chapter = await db.get(Chapter, request.chapter_id)
-            if chapter is None:
-                raise HTTPException(status_code=400, detail="Chapter not found")
-
-            existing = await db.execute(
-                select(Shot.id).where(Shot.chapter_id == request.chapter_id).limit(1)
+                raise HTTPException(status_code=400, detail=required_field("chapter_id", when="write_to_db=true"))
+            await write_division_result_to_chapter(
+                db,
+                chapter_id=request.chapter_id,
+                result=result,
             )
-            if existing.first() is not None:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Chapter already has shots; refusing to write (write_strategy=fail)",
-                )
-
-            for s in result.shots:
-                title = (s.shot_name or "").strip() or f"镜头 {s.index}"
-                shot_id = str(uuid.uuid4())
-                db.add(
-                    Shot(
-                        id=shot_id,
-                        chapter_id=request.chapter_id,
-                        index=s.index,
-                        title=title,
-                        script_excerpt=s.script_excerpt,
-                    )
-                )
-                db.add(
-                    ShotDetail(
-                        id=shot_id,
-                        camera_shot=CameraShotType.ms,
-                        angle=CameraAngle.eye_level,
-                        movement=CameraMovement.static,
-                        follow_atmosphere=True,
-                        vfx_type=VFXType.none,
-                        duration=4,
-                    )
-                )
-            # 触发唯一约束/外键检查，确保在返回前失败
-            await db.flush()
 
         return success_response(data=result)
     except HTTPException:
@@ -555,6 +526,7 @@ class ScriptExtractRequest(BaseModel):
     chapter_id: str = Field(..., description="章节 ID", min_length=1)
     script_division: dict[str, Any] = Field(..., description="分镜结果（ScriptDivisionResult 序列化）")
     consistency: dict[str, Any] | None = Field(None, description="一致性检查结果（可选；ScriptConsistencyCheckResult 序列化）")
+    refresh_cache: bool = Field(False, description="是否跳过后端缓存并强制重新提取")
 
 
 @router.post(
@@ -566,8 +538,26 @@ class ScriptExtractRequest(BaseModel):
 async def extract_script(
     request: ScriptExtractRequest,
     llm: BaseChatModel = Depends(get_nothinking_llm),
+    db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[StudioScriptExtractionDraft]:
     try:
+        cache_key = build_script_extract_cache_key(
+            project_id=request.project_id,
+            chapter_id=request.chapter_id,
+            script_division=request.script_division,
+            consistency=request.consistency,
+        )
+        if not request.refresh_cache:
+            cached = get_cached_script_extract(cache_key)
+            if cached is not None:
+                await sync_shot_extracted_candidates_from_draft(
+                    db,
+                    chapter_id=request.chapter_id,
+                    draft=cached,
+                )
+                await db.commit()
+                return success_response(data=cached, meta={"from_cache": True})
+
         agent = ElementExtractorAgent(llm)
         result = agent.extract(
             project_id=request.project_id,
@@ -575,7 +565,14 @@ async def extract_script(
             script_division_json=json.dumps(request.script_division, ensure_ascii=False),
             consistency_json=json.dumps(request.consistency or {}, ensure_ascii=False),
         )
-        return success_response(data=result)
+        set_cached_script_extract(cache_key, result)
+        await sync_shot_extracted_candidates_from_draft(
+            db,
+            chapter_id=request.chapter_id,
+            draft=result,
+        )
+        await db.commit()
+        return success_response(data=result, meta={"from_cache": False})
     except Exception as e:
         logger.error(f"Script extraction failed: {e}")
         raise HTTPException(
@@ -659,4 +656,3 @@ async def full_process(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process script: {str(e)}"
         )
-

@@ -16,5 +16,9 @@ export type ApiResponse_PaginatedData_ChapterRead__ = {
      * 实际数据
      */
     data?: (PaginatedData_ChapterRead_ | null);
+    /**
+     * 附加元信息
+     */
+    meta?: (Record<string, any> | null);
 };
 

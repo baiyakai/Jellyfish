@@ -36,6 +36,52 @@ backend/
 └── README.md
 ```
 
+## 当前分层约定
+
+目前后端已经按“**路由层瘦身，业务逻辑下沉**”的方向整理过一轮，建议后续继续遵循下面这套分工：
+
+- `app/api/v1/routes/`
+  - 负责收参、依赖注入、调用 service、包装响应
+- `app/services/common/`
+  - 负责通用校验、通用 CRUD、公共错误文案
+- `app/services/studio/`
+  - 负责项目、章节、分镜、文件、图片任务等 Studio 主业务
+- `app/services/llm/`
+  - 负责 Provider / Model / Settings 管理逻辑
+- `app/services/film/`
+  - 负责视频生成、分镜帧提示词任务等编排逻辑
+
+推荐遵循的判断标准：
+
+- **留在 route 的**
+  - 参数解析
+  - `Depends`
+  - 调 service
+  - 返回 `ApiResponse`
+- **放到 service 的**
+  - 跨实体校验
+  - 默认值策略
+  - 文件/存储交互
+  - 任务编排
+  - AI 工作流调用
+
+## 响应与错误约定
+
+当前接口已经统一使用 `ApiResponse` 响应壳，后续新增接口也建议保持一致：
+
+- 创建成功：`created_response(...)`
+- 普通成功：`success_response(...)`
+- 空响应成功：`empty_response()`
+- 分页成功：`paginated_response(...)`
+
+错误风格也已开始统一，优先复用：
+
+- `entity_not_found(...)`
+- `entity_already_exists(...)`
+- `required_field(...)`
+- `invalid_choice(...)`
+- `not_belong_to(...)`
+
 ## 快速开始
 
 ### 1. 安装 uv（若未安装）
@@ -117,7 +163,9 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | `uv add <pkg>` | 添加依赖 |
 | `uv run uvicorn app.main:app --reload` | 开发运行 |
 | `uv run pytest` | 运行测试 |
+| `uv run pytest tests/... -q` | 运行定向测试 |
 | `uv run pylint app` | 对 `app` 包运行 Pylint（需已 `uv sync --group dev`） |
+| `python -m py_compile <paths>` | 快速做语法检查 |
 
 ## 代码检查（Pylint）
 
@@ -135,15 +183,92 @@ uv run pylint app
 
 ## 测试
 
-### 单元测试与集成测试（Mock）
+### 推荐入口
 
-- **集成测试（Mock）**：`tests/test_skills_integration.py` 中的 `TestAppIntegration`，覆盖 FastAPI 健康检查与示例路由。
+现在无论你在仓库根目录还是 `backend/` 目录运行，pytest 都已经做了统一配置。
+
+在 `backend/` 目录：
 
 ```bash
-uv run pytest tests/test_skills_integration.py -v
+cd backend
+uv run pytest -q
 ```
 
-真实 LLM 测试前请安装可选依赖：`uv sync --group dev`（含 `langchain-openai`）。
+在仓库根目录：
+
+```bash
+uv run pytest backend/tests -q
+```
+
+### 常用定向测试
+
+运行 service 层测试：
+
+```bash
+cd backend
+uv run pytest \
+  tests/test_common_services.py \
+  tests/test_llm_manage.py \
+  tests/test_shot_character_links.py \
+  tests/test_script_division.py \
+  tests/test_studio_files_service.py \
+  tests/test_generated_video_service.py \
+  tests/test_shot_frame_prompt_tasks_service.py \
+  tests/test_image_task_services.py \
+  -q
+```
+
+运行 API 响应壳测试：
+
+```bash
+cd backend
+uv run pytest \
+  tests/test_api_response_envelopes.py \
+  tests/test_llm_api_responses.py \
+  tests/test_studio_prompts_categories.py \
+  tests/test_studio_api_responses.py \
+  tests/test_shot_subresource_api_responses.py \
+  tests/test_files_api_responses.py \
+  tests/test_task_status_api_responses.py \
+  tests/test_shot_character_links_api_responses.py \
+  tests/test_image_tasks_api_responses.py \
+  tests/test_generated_video_api_responses.py \
+  tests/test_tasks_images_api_responses.py \
+  -q
+```
+
+### 当前测试重点
+
+当前测试主要覆盖三类目标：
+
+- **公共层**
+  - 通用校验、通用 CRUD、公共错误文案
+- **service 层**
+  - `studio`、`llm`、`film` 的关键业务服务
+- **API 层**
+  - 创建/删除/异常时的 `ApiResponse` 外层结构
+
+如果只是快速验证本轮改动，建议优先：
+
+```bash
+cd backend
+uv run pytest tests/test_common_services.py tests/test_studio_api_responses.py -q
+```
+
+### 语法级快速检查
+
+在做较大重构但暂时不想跑全量测试时，可以先做一轮语法检查：
+
+```bash
+cd backend
+python -m py_compile $(rg --files app tests)
+```
+
+### 说明
+
+- 根目录 `pytest.ini` 已补齐，避免从仓库根目录执行时异步测试被误跳过
+- 异步测试统一使用 `@pytest.mark.asyncio`
+- 真实 LLM 联调前，请先执行 `uv sync --group dev`
 
 ## 扩展说明
 

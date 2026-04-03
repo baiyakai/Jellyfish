@@ -29,6 +29,10 @@ export type ShotRead = {
      */
     status?: ShotStatus;
     /**
+     * 是否明确跳过信息提取
+     */
+    skip_extraction?: boolean;
+    /**
      * 剧本摘录
      */
     script_excerpt?: string;

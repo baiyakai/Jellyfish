@@ -56,7 +56,12 @@ export function AssetTypeTab({
 
   const [editOpen, setEditOpen] = useState(false)
   const [editing, setEditing] = useState<StudioAssetLike | null>(null)
-  const [createSeed, setCreateSeed] = useState<{ name: string; desc: string } | null>(null)
+  const [createSeed, setCreateSeed] = useState<{
+    name: string
+    desc: string
+    visualStyle?: '现实' | '动漫'
+    style?: string
+  } | null>(null)
   const [fromShotCreateContext, setFromShotCreateContext] = useState<{
     projectId: string
     chapterId: string
@@ -108,9 +113,16 @@ export function AssetTypeTab({
     const projectId = searchParams.get('projectId')?.trim() ?? ''
     const chapterId = searchParams.get('chapterId')?.trim() ?? ''
     const shotId = searchParams.get('shotId')?.trim() ?? ''
+    const visualStyle = (searchParams.get('visualStyle')?.trim() || '') as '现实' | '动漫' | ''
+    const style = searchParams.get('style')?.trim() ?? ''
     if (create === '1' && tab === tabKey) {
       setEditing(null)
-      setCreateSeed({ name, desc })
+      setCreateSeed({
+        name,
+        desc,
+        visualStyle: visualStyle || undefined,
+        style: style || undefined,
+      })
       if (projectId && chapterId && shotId) {
         setFromShotCreateContext({ projectId, chapterId, shotId })
       } else {
@@ -126,6 +138,8 @@ export function AssetTypeTab({
           next.delete('projectId')
           next.delete('chapterId')
           next.delete('shotId')
+          next.delete('visualStyle')
+          next.delete('style')
           return next
         },
         { replace: true },
@@ -287,7 +301,16 @@ export function AssetTypeTab({
         createAsset={createAsset}
         updateAsset={updateAsset}
         onCancel={handleModalCancel}
-        seedCreateForm={createSeed ? { name: createSeed.name, description: createSeed.desc } : null}
+        seedCreateForm={
+          createSeed
+            ? {
+                name: createSeed.name,
+                description: createSeed.desc,
+                visual_style: createSeed.visualStyle,
+                style: createSeed.style,
+              }
+            : null
+        }
         onSeedConsumed={() => setCreateSeed(null)}
         onSaved={async (ctx) => {
           if (ctx.type === 'update') {

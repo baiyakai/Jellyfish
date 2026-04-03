@@ -15,18 +15,18 @@ from typing import cast
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.responses import Response
 
 from app.api.utils import apply_keyword_filter, apply_order, paginate
 from app.dependencies import get_db
 from app.models.studio import PromptCategory, PromptTemplate
-from app.schemas.common import ApiResponse, PaginatedData, paginated_response, success_response
+from app.schemas.common import ApiResponse, PaginatedData, created_response, empty_response, paginated_response, success_response
 from app.schemas.studio.prompts import (
     PromptCategoryOptionRead,
     PromptTemplateCreate,
     PromptTemplateRead,
     PromptTemplateUpdate,
 )
+from app.services.common import entity_not_found
 
 router = APIRouter()
 
@@ -144,7 +144,7 @@ async def get_prompt_template(
 ) -> ApiResponse[PromptTemplateRead]:
     obj = await db.get(PromptTemplate, template_id)
     if obj is None:
-        raise HTTPException(status_code=404, detail="PromptTemplate not found")
+        raise HTTPException(status_code=404, detail=entity_not_found("PromptTemplate"))
     return success_response(PromptTemplateRead.model_validate(obj))
 
 
@@ -177,7 +177,7 @@ async def create_prompt_template(
     db.add(obj)
     await db.flush()
     await db.refresh(obj)
-    return success_response(PromptTemplateRead.model_validate(obj), code=201)
+    return created_response(PromptTemplateRead.model_validate(obj))
 
 
 # ---------- 更新 ----------
@@ -194,7 +194,7 @@ async def update_prompt_template(
 ) -> ApiResponse[PromptTemplateRead]:
     obj = await db.get(PromptTemplate, template_id)
     if obj is None:
-        raise HTTPException(status_code=404, detail="PromptTemplate not found")
+        raise HTTPException(status_code=404, detail=entity_not_found("PromptTemplate"))
     if obj.is_system:
         raise HTTPException(status_code=403, detail="系统预置提示词不可修改")
 
@@ -215,21 +215,19 @@ async def update_prompt_template(
 
 @router.delete(
     "/{template_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
+    response_model=ApiResponse[None],
     summary="删除提示词模板",
 )
 async def delete_prompt_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
-) -> Response:
+) -> ApiResponse[None]:
     obj = await db.get(PromptTemplate, template_id)
     if obj is None:
-        raise HTTPException(status_code=404, detail="PromptTemplate not found")
+        raise HTTPException(status_code=404, detail=entity_not_found("PromptTemplate"))
     if obj.is_system:
         raise HTTPException(status_code=403, detail="系统预置提示词不可删除")
     if obj.is_default:
         raise HTTPException(status_code=403, detail="默认提示词不可删除，请先将其他提示词设为默认")
     await db.delete(obj)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
+    return empty_response()

@@ -30,9 +30,10 @@ export function resolveAssetUrl(value?: string | null): string | undefined {
 
   try {
     const fallbackBase =
+      window.__ENV?.BACKEND_URL ||
       import.meta.env.VITE_BACKEND_URL ||
       import.meta.env.VITE_API_BASE_URL ||
-      (typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
+      'http://localhost:8000'
     return new URL(trimmed, OpenAPI.BASE || fallbackBase).toString()
   } catch {
     return trimmed
@@ -43,4 +44,3 @@ export function buildFileDownloadUrl(fileId?: string | null): string | undefined
   if (!fileId) return undefined
   return resolveAssetUrl(`/api/v1/studio/files/${encodeURIComponent(fileId)}/download`)
 }
-

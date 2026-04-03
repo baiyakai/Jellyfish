@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.studio import PromptCategory
 
@@ -41,6 +41,8 @@ class PromptTemplateUpdate(BaseModel):
 class PromptTemplateRead(BaseModel):
     """读取提示词模板（含全部字段）。"""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: str = Field(..., description="模板 ID")
     category: PromptCategory = Field(..., description="模板类别")
     name: str = Field(..., description="模板名称")
@@ -51,7 +53,4 @@ class PromptTemplateRead(BaseModel):
     is_system: bool = Field(..., description="是否为系统预置")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="最后更新时间")
-
-    class Config:
-        from_attributes = True
 

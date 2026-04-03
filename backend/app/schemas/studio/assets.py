@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.studio import AssetQualityLevel, AssetViewAngle, ProjectStyle, ProjectVisualStyle
 
@@ -62,10 +62,9 @@ class AssetUpdate(BaseModel):
 
 
 class AssetRead(AssetBase):
-    thumbnail: str = Field("", description="缩略图下载地址")
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    thumbnail: str = Field("", description="缩略图下载地址")
 
 
 class AssetImageBase(BaseModel):
@@ -109,29 +108,24 @@ class CostumeRead(AssetRead):
 
 
 class SceneImageRead(AssetImageBase):
-    scene_id: str
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    scene_id: str
 
 
 class PropImageRead(AssetImageBase):
-    prop_id: str
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    prop_id: str
 
 
 class CostumeImageRead(AssetImageBase):
-    costume_id: str
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    costume_id: str
 
 
 class CharacterImageRead(AssetImageBase):
+    model_config = ConfigDict(from_attributes=True)
+
     character_id: str
-
-    class Config:
-        from_attributes = True
-

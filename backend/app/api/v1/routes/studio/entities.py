@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.schemas.common import ApiResponse, PaginatedData, paginated_response, success_response
+from app.schemas.common import ApiResponse, PaginatedData, created_response, empty_response, paginated_response, success_response
 from app.schemas.studio.entity_existence import (
     EntityNameExistenceCheckRequest,
     EntityNameExistenceCheckResponse,
@@ -73,7 +73,7 @@ async def create_entity(
 ) -> ApiResponse[dict[str, Any]]:
     service = StudioEntitiesService(db)
     payload = await service.create_entity(entity_type=entity_type, body=body)
-    return success_response(payload, code=201)
+    return created_response(payload)
 
 
 @router.get("/{entity_type}/{entity_id}", response_model=ApiResponse[dict[str, Any]], summary="统一获取实体")
@@ -99,7 +99,7 @@ async def update_entity(
 async def delete_entity(entity_type: str, entity_id: str, db: AsyncSession = Depends(get_db)) -> ApiResponse[None]:
     service = StudioEntitiesService(db)
     await service.delete_entity(entity_type=entity_type, entity_id=entity_id)
-    return success_response(None)
+    return empty_response()
 
 
 @router.get(
@@ -142,7 +142,7 @@ async def create_entity_image(
 ) -> ApiResponse[dict[str, Any]]:
     service = StudioEntitiesService(db)
     payload = await service.create_entity_image(entity_type=entity_type, entity_id=entity_id, body=body)
-    return success_response(payload, code=201)
+    return created_response(payload)
 
 
 @router.patch(
@@ -180,5 +180,4 @@ async def delete_entity_image(
 ) -> ApiResponse[None]:
     service = StudioEntitiesService(db)
     await service.delete_entity_image(entity_type=entity_type, entity_id=entity_id, image_id=image_id)
-    return success_response(None)
-
+    return empty_response()

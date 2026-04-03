@@ -1,11 +1,16 @@
-import { Card, Button, Tag, Statistic, Row, Col, Progress, Space, Spin } from 'antd'
-import { RiseOutlined, VideoCameraOutlined } from '@ant-design/icons'
+import { Card, Button, Statistic, Row, Col, Progress, Space, Spin } from 'antd'
+import {
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  RiseOutlined,
+  VideoCameraOutlined,
+} from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import { chapterStatusMap } from '../constants'
 import type { TabKey } from '../constants'
-import { getProjectChaptersPath, getProjectEditorPath } from '../routes'
+import { getChapterShotsPath, getChapterStudioPath, getProjectChaptersPath, getProjectEditorPath } from '../routes'
 import { useProject, useChapters } from '../hooks/useProjectData'
 import { ensureHasShotsBeforeShooting } from '../ensureHasShotsBeforeShooting'
+import { getChapterPreparationState } from '../chapterPreparation'
 
 export function DashboardTab({ onSelectTab }: { onSelectTab: (tab: TabKey) => void }) {
   const navigate = useNavigate()
@@ -14,8 +19,15 @@ export function DashboardTab({ onSelectTab }: { onSelectTab: (tab: TabKey) => vo
   const { chapters, loading: chaptersLoading } = useChapters(projectId)
 
   const loading = projectLoading || chaptersLoading
-  const incompleteChapters = chapters.filter((c) => c.status !== 'done')
-  const latestChapter = chapters.find((c) => c.status === 'shooting') ?? incompleteChapters[0]
+  const chaptersByIndex = [...chapters].sort((a, b) => a.index - b.index)
+  const incompleteChapters = chaptersByIndex.filter((c) => c.status !== 'done')
+  const recommendedChapter =
+    chaptersByIndex.find((chapter) => getChapterPreparationState(chapter).key === 'edit_raw') ??
+    chaptersByIndex.find((chapter) => getChapterPreparationState(chapter).key === 'extract_shots') ??
+    chaptersByIndex.find((chapter) => getChapterPreparationState(chapter).key === 'prepare_shots') ??
+    chaptersByIndex.find((chapter) => getChapterPreparationState(chapter).key === 'shoot') ??
+    chaptersByIndex[0] ??
+    null
 
   if (loading && !project) {
     return (
@@ -31,36 +43,91 @@ export function DashboardTab({ onSelectTab }: { onSelectTab: (tab: TabKey) => vo
   const totalShots = chapters.reduce((s, c) => s + c.storyboardCount, 0)
   const completedShots = Math.round((totalShots * project.progress) / 100)
   const incompleteCount = incompleteChapters.length
+  const recommendedState = recommendedChapter ? getChapterPreparationState(recommendedChapter) : null
+  const chaptersNeedingRawText = chaptersByIndex.filter((chapter) => getChapterPreparationState(chapter).key === 'edit_raw').length
+  const chaptersNeedingShotExtract = chaptersByIndex.filter((chapter) => getChapterPreparationState(chapter).key === 'extract_shots').length
+  const chaptersNeedingShotPrep = chaptersByIndex.filter((chapter) => getChapterPreparationState(chapter).key === 'prepare_shots').length
+  const chaptersReadyForShoot = chaptersByIndex.filter((chapter) => getChapterPreparationState(chapter).key === 'shoot').length
+
+  const handleRecommendedAction = () => {
+    if (!projectId) return
+    if (!recommendedChapter || !recommendedState) {
+      onSelectTab('chapters')
+      return
+    }
+    if (recommendedState.key === 'edit_raw') {
+      onSelectTab('chapters')
+      navigate(`/projects/${projectId}?tab=chapters&edit=${recommendedChapter.id}`, { replace: false })
+      return
+    }
+    if (recommendedState.key === 'extract_shots') {
+      navigate(getChapterShotsPath(projectId, recommendedChapter.id))
+      return
+    }
+    if (recommendedState.key === 'prepare_shots') {
+      navigate(getChapterStudioPath(projectId, recommendedChapter.id))
+      return
+    }
+    void ensureHasShotsBeforeShooting({
+      projectId,
+      chapterId: recommendedChapter.id,
+      storyboardCount: recommendedChapter.storyboardCount,
+      navigate,
+    })
+  }
+
+  const chapterTodoCards = [
+    {
+      key: 'edit_raw',
+      title: '待补原文',
+      count: chaptersNeedingRawText,
+      hint: '这些章节还没进入分镜流程',
+      icon: <ClockCircleOutlined />,
+    },
+    {
+      key: 'extract_shots',
+      title: '待提取分镜',
+      count: chaptersNeedingShotExtract,
+      hint: '已有原文，可直接进入分镜提取',
+      icon: <ClockCircleOutlined />,
+    },
+    {
+      key: 'prepare_shots',
+      title: '待准备镜头',
+      count: chaptersNeedingShotPrep,
+      hint: '已有分镜，建议进入工作室继续处理',
+      icon: <ClockCircleOutlined />,
+    },
+    {
+      key: 'shoot',
+      title: '可继续拍摄',
+      count: chaptersReadyForShoot,
+      hint: '这部分章节已具备继续拍摄条件',
+      icon: <CheckCircleOutlined />,
+    },
+  ] as const
 
   return (
     <div className="space-y-6">
       <Card size="small">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            <div className="font-medium">快速开始</div>
+            <div className="font-medium">当前推荐动作</div>
             <div className="text-xs text-gray-500">
-              {latestChapter
-                ? `继续拍摄：第${latestChapter.index}章（${latestChapter.title}）`
-                : '暂无进行中的章节，可先创建章节或进入章节管理'}
+              {recommendedChapter && recommendedState
+                ? `第${recommendedChapter.index}章 · ${recommendedState.hint}`
+                : '暂无章节，可先创建第一章'}
             </div>
           </div>
           <Space wrap>
-            <Button onClick={() => onSelectTab('chapters')}>创建/管理章节</Button>
+            <Button onClick={() => onSelectTab('chapters')}>进入章节管理</Button>
             <Button onClick={() => projectId && navigate(getProjectEditorPath(projectId))}>进入后期剪辑</Button>
             <Button
               type="primary"
-              icon={<VideoCameraOutlined />}
-              disabled={!latestChapter}
-              onClick={() =>
-                ensureHasShotsBeforeShooting({
-                  projectId,
-                  chapterId: latestChapter?.id,
-                  storyboardCount: latestChapter?.storyboardCount,
-                  navigate,
-                })
-              }
+              icon={recommendedState?.primaryIcon ?? <VideoCameraOutlined />}
+              onClick={handleRecommendedAction}
             >
-              继续拍摄
+              {recommendedChapter && recommendedState ? recommendedState.primaryAction : '创建第一章'}
             </Button>
           </Space>
         </div>
@@ -97,7 +164,7 @@ export function DashboardTab({ onSelectTab }: { onSelectTab: (tab: TabKey) => vo
       </Row>
 
       <Card
-        title="章节进度"
+        title="当前待办"
         size="small"
         extra={
           <Button type="link" onClick={() => projectId && navigate(getProjectChaptersPath(projectId))}>
@@ -114,30 +181,22 @@ export function DashboardTab({ onSelectTab }: { onSelectTab: (tab: TabKey) => vo
               </Button>
             </div>
           ) : (
-            chapters.slice(0, 8).map((ch) => (
+            chapterTodoCards.map((item) => (
               <Card
-                key={ch.id}
+                key={item.key}
                 size="small"
                 hoverable
                 className="shrink-0 cursor-pointer"
                 style={{ width: 280 }}
-                onClick={() =>
-                  ensureHasShotsBeforeShooting({
-                    projectId,
-                    chapterId: ch.id,
-                    storyboardCount: ch.storyboardCount,
-                    navigate,
-                  })
-                }
+                onClick={() => onSelectTab('chapters')}
               >
-                <div className="font-medium truncate">
-                  第{ch.index}集 {ch.title}
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-medium truncate">{item.title}</div>
+                  <span className="text-gray-400">{item.icon}</span>
                 </div>
-                <Tag color={chapterStatusMap[ch.status].color} className="mt-1">
-                  {chapterStatusMap[ch.status].text}
-                </Tag>
+                <div className="mt-1 text-2xl font-semibold">{item.count}</div>
                 <div className="text-xs text-gray-500 mt-1">
-                  分镜 {ch.storyboardCount} · {ch.updatedAt}
+                  {item.hint}
                 </div>
               </Card>
             ))
@@ -186,4 +245,3 @@ export function DashboardTab({ onSelectTab }: { onSelectTab: (tab: TabKey) => vo
     </div>
   )
 }
-

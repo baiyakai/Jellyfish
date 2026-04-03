@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.models.studio import AssetQualityLevel, AssetViewAngle
 
 
 class ActorImageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     actor_id: str
     quality_level: AssetQualityLevel = AssetQualityLevel.low
@@ -16,7 +18,4 @@ class ActorImageRead(BaseModel):
     width: int | None = None
     height: int | None = None
     format: str = "png"
-
-    class Config:
-        from_attributes = True
 

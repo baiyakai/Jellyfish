@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.studio import (
     CameraAngle,
@@ -12,6 +13,8 @@ from app.models.studio import (
     CameraShotType,
     DialogueLineMode,
     ShotFrameType,
+    ShotCandidateStatus,
+    ShotCandidateType,
     ShotStatus,
     VFXType,
 )
@@ -24,6 +27,7 @@ class ShotBase(BaseModel):
     title: str = Field(..., description="镜头标题")
     thumbnail: str = Field("", description="缩略图 URL/路径")
     status: ShotStatus = Field(ShotStatus.pending, description="镜头状态")
+    skip_extraction: bool = Field(False, description="是否明确跳过信息提取")
     script_excerpt: str = Field("", description="剧本摘录")
     generated_video_file_id: str | None = Field(
         None,
@@ -41,13 +45,37 @@ class ShotUpdate(BaseModel):
     title: str | None = None
     thumbnail: str | None = None
     status: ShotStatus | None = None
+    skip_extraction: bool | None = None
     script_excerpt: str | None = None
     generated_video_file_id: str | None = None
 
 
 class ShotRead(ShotBase):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ShotSkipExtractionUpdate(BaseModel):
+    skip: bool = Field(..., description="是否明确跳过信息提取")
+
+
+class ShotExtractedCandidateLinkRequest(BaseModel):
+    linked_entity_id: str = Field(..., description="确认关联到的实体 ID")
+
+
+class ShotExtractedCandidateRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(..., description="候选项 ID")
+    shot_id: str = Field(..., description="所属镜头 ID")
+    candidate_type: ShotCandidateType = Field(..., description="候选类型")
+    candidate_name: str = Field(..., description="提取出的候选名称")
+    candidate_status: ShotCandidateStatus = Field(..., description="候选确认状态")
+    linked_entity_id: str | None = Field(None, description="已关联实体 ID")
+    source: str = Field(..., description="候选来源")
+    payload: dict = Field(default_factory=dict, description="候选附加信息")
+    confirmed_at: datetime | None = Field(None, description="确认时间")
+    created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")
 
 
 class ShotDetailBase(BaseModel):
@@ -99,8 +127,7 @@ class ShotDetailUpdate(BaseModel):
 
 
 class ShotDetailRead(ShotDetailBase):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ShotDialogLineBase(BaseModel):
@@ -137,8 +164,7 @@ class ShotDialogLineUpdate(BaseModel):
 
 
 class ShotDialogLineRead(ShotDialogLineBase):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectLinkBase(BaseModel):
@@ -156,35 +182,31 @@ class ProjectAssetLinkCreate(BaseModel):
 
 
 class ProjectActorLinkRead(ProjectLinkBase):
+    model_config = ConfigDict(from_attributes=True)
+
     actor_id: str
     thumbnail: str = Field("", description="演员缩略图下载地址")
 
-    class Config:
-        from_attributes = True
-
 
 class ProjectSceneLinkRead(ProjectLinkBase):
+    model_config = ConfigDict(from_attributes=True)
+
     scene_id: str
     thumbnail: str = Field("", description="场景缩略图下载地址")
 
-    class Config:
-        from_attributes = True
-
 
 class ProjectPropLinkRead(ProjectLinkBase):
+    model_config = ConfigDict(from_attributes=True)
+
     prop_id: str
     thumbnail: str = Field("", description="道具缩略图下载地址")
 
-    class Config:
-        from_attributes = True
-
 
 class ProjectCostumeLinkRead(ProjectLinkBase):
+    model_config = ConfigDict(from_attributes=True)
+
     costume_id: str
     thumbnail: str = Field("", description="服装缩略图下载地址")
-
-    class Config:
-        from_attributes = True
 
 
 class ShotFrameImageBase(BaseModel):
@@ -215,8 +237,7 @@ class ShotFrameImageUpdate(BaseModel):
 
 
 class ShotFrameImageRead(ShotFrameImageBase):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 ShotLinkedAssetType = Literal["character", "prop", "scene", "costume"]
@@ -238,3 +259,39 @@ class ShotLinkedAssetItem(BaseModel):
     name: str = Field(..., description="实体名称")
     thumbnail: str = Field("", description="缩略图下载地址（/api/v1/studio/files/{file_id}/download）")
 
+
+ShotAssetOverviewSource = Literal["linked", "candidate", "both"]
+
+
+class ShotAssetOverviewItem(BaseModel):
+    """分镜资产总览项：统一返回已关联资产与提取候选的合并视图。"""
+
+    key: str = Field(..., description="合并键：type:name")
+    type: ShotLinkedAssetType = Field(..., description="实体类型：character/prop/scene/costume")
+    name: str = Field(..., description="资产名称")
+    description: str | None = Field(None, description="候选描述（来自 extraction payload）")
+    thumbnail: str | None = Field(None, description="缩略图")
+    file_id: str | None = Field(None, description="缩略图或参考图文件 ID")
+
+    source: ShotAssetOverviewSource = Field(..., description="来源：linked/candidate/both")
+    candidate_id: int | None = Field(None, description="候选项 ID")
+    candidate_status: ShotCandidateStatus | None = Field(None, description="候选确认状态")
+
+    linked_entity_id: str | None = Field(None, description="当前已关联实体 ID")
+    linked_image_id: int | None = Field(None, description="当前已关联实体的 image 行 ID")
+    is_linked: bool = Field(..., description="当前是否已关联到镜头")
+
+
+class ShotAssetsOverviewSummary(BaseModel):
+    linked_count: int = Field(..., description="已关联项数量")
+    pending_count: int = Field(..., description="待确认候选数量")
+    ignored_count: int = Field(..., description="已忽略候选数量")
+    total_count: int = Field(..., description="总项数（含 ignored）")
+
+
+class ShotAssetsOverviewRead(BaseModel):
+    shot_id: str = Field(..., description="镜头 ID")
+    skip_extraction: bool = Field(..., description="是否明确跳过提取")
+    status: ShotStatus = Field(..., description="镜头流程状态")
+    summary: ShotAssetsOverviewSummary = Field(..., description="总览统计")
+    items: list[ShotAssetOverviewItem] = Field(default_factory=list, description="资产总览项")

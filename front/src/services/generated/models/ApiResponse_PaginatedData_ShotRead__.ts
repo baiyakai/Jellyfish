@@ -16,5 +16,9 @@ export type ApiResponse_PaginatedData_ShotRead__ = {
      * 实际数据
      */
     data?: (PaginatedData_ShotRead_ | null);
+    /**
+     * 附加元信息
+     */
+    meta?: (Record<string, any> | null);
 };
 

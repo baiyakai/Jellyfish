@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -19,3 +22,24 @@ def client() -> TestClient:
     if app is None:
         pytest.skip("FastAPI app 依赖未满足（例如缺少 langgraph），跳过需要 client 的集成测试。")
     return TestClient(app)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """为轻量测试环境补齐 asyncio marker。"""
+    config.addinivalue_line("markers", "asyncio: mark test as asyncio coroutine")
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
+    """在未安装 pytest-asyncio 的环境中兜底执行 async 测试。"""
+
+    if not inspect.iscoroutinefunction(pyfuncitem.obj):
+        return None
+
+    funcargs = {
+        arg: pyfuncitem.funcargs[arg]
+        for arg in pyfuncitem._fixtureinfo.argnames
+        if arg in pyfuncitem.funcargs
+    }
+    asyncio.run(pyfuncitem.obj(**funcargs))
+    return True

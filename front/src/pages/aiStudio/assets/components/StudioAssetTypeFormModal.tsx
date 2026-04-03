@@ -73,7 +73,12 @@ export function StudioAssetTypeFormModal({
   updateAsset: (id: string, payload: AssetMutationPayload) => Promise<StudioAssetLike>
   onCancel: () => void
   onSaved: (ctx: StudioAssetSavedContext) => void | Promise<void>
-  seedCreateForm?: { name?: string; description?: string } | null
+  seedCreateForm?: {
+    name?: string
+    description?: string
+    visual_style?: '现实' | '动漫'
+    style?: string
+  } | null
   onSeedConsumed?: () => void
 }) {
   void _entityType
@@ -110,15 +115,18 @@ export function StudioAssetTypeFormModal({
       if (seedCreateForm) {
         setFormName(seedCreateForm.name ?? '')
         setFormDesc(seedCreateForm.description ?? '')
+        const nextVisual = seedCreateForm.visual_style ?? '现实'
+        setFormVisualStyle(nextVisual)
+        setFormStyle(seedCreateForm.style ?? PROJECT_STYLE_OPTIONS_BY_VISUAL[nextVisual]?.[0]?.value ?? '真人都市')
         onSeedConsumed?.()
       } else {
         setFormName('')
         setFormDesc('')
+        setFormVisualStyle('现实')
+        setFormStyle(PROJECT_STYLE_OPTIONS_BY_VISUAL['现实'][0]?.value ?? '真人都市')
       }
       setFormTags('')
       setFormViewCount(null)
-      setFormVisualStyle('现实')
-      setFormStyle(PROJECT_STYLE_OPTIONS_BY_VISUAL['现实'][0]?.value ?? '真人都市')
     }
   }, [open, editing, seedCreateForm, onSeedConsumed])
 

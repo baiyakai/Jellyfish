@@ -16,5 +16,9 @@ export type ApiResponse_list_ShotCharacterLinkRead__ = {
      * 实际数据
      */
     data?: (Array<ShotCharacterLinkRead> | null);
+    /**
+     * 附加元信息
+     */
+    meta?: (Record<string, any> | null);
 };
 

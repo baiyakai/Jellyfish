@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.llm import Model, ModelCategoryKey, ModelSettings, Provider
+from app.services.common import entity_not_found
 
 
 def _settings_model_id(settings_row: ModelSettings | None, category: ModelCategoryKey) -> str | None:
@@ -86,7 +87,7 @@ async def _resolve_model(db: AsyncSession, model_or_id: Model | str) -> Model:
         return model_or_id
     model = await db.get(Model, model_or_id)
     if model is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=entity_not_found("Model"))
     return model if isinstance(model, Model) else cast(Model, cast(Any, model))
 
 
@@ -95,7 +96,7 @@ async def _resolve_provider(db: AsyncSession, provider_or_id: Provider | str) ->
         return provider_or_id
     provider = await db.get(Provider, provider_or_id)
     if provider is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=entity_not_found("Provider"))
     return provider if isinstance(provider, Provider) else cast(Provider, cast(Any, provider))
 
 
@@ -159,4 +160,3 @@ async def build_chat_model_from_provider(
         kwargs.setdefault("base_url", base_url)
 
     return ChatOpenAI(**kwargs)
-

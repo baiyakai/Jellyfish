@@ -14,6 +14,7 @@ from app.core import storage
 from app.core.tasks import ProviderConfig
 from app.models.llm import Model, ModelCategoryKey
 from app.models.studio import AssetViewAngle, FileItem, PromptCategory, PromptTemplate, ShotFrameType
+from app.services.common import entity_not_found
 from app.services.llm import get_model_by_category, get_provider_by_id_or_obj
 
 
@@ -68,7 +69,7 @@ async def load_provider_config(db: AsyncSession, provider_id: str) -> ProviderCo
         if e.status_code == status.HTTP_404_NOT_FOUND:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Provider not found for provider_id={provider_id}",
+                detail=f"{entity_not_found('Provider')} for provider_id={provider_id}",
             ) from e
         raise
 
@@ -313,4 +314,3 @@ def shot_frame_prompt_category(frame_type: ShotFrameType | str) -> PromptCategor
     if value == ShotFrameType.last.value:
         return PromptCategory.frame_tail_image
     return PromptCategory.frame_key_image
-

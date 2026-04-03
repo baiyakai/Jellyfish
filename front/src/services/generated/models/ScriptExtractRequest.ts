@@ -22,5 +22,9 @@ export type ScriptExtractRequest = {
      * 一致性检查结果（可选；ScriptConsistencyCheckResult 序列化）
      */
     consistency?: (Record<string, any> | null);
+    /**
+     * 是否跳过后端缓存并强制重新提取
+     */
+    refresh_cache?: boolean;
 };
 

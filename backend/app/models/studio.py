@@ -27,6 +27,7 @@ from app.models.studio_projects import (
 )
 from app.models.studio_shots import (
     Shot,
+    ShotExtractedCandidate,
     ShotCharacterLink,
     ShotDetail,
     ShotDialogLine,
@@ -45,6 +46,8 @@ from app.models.types import (
     ProjectStyle,
     ProjectVisualStyle,
     PromptCategory,
+    ShotCandidateStatus,
+    ShotCandidateType,
     ShotFrameType,
     ShotStatus,
     TimelineClipType,
@@ -57,6 +60,8 @@ __all__ = [
     "ProjectVisualStyle",
     "ChapterStatus",
     "ShotStatus",
+    "ShotCandidateType",
+    "ShotCandidateStatus",
     "CameraShotType",
     "CameraAngle",
     "CameraMovement",
@@ -79,6 +84,7 @@ __all__ = [
     "ShotDetail",
     "ShotFrameImage",
     "ShotDialogLine",
+    "ShotExtractedCandidate",
     "Actor",
     "Character",
     "CharacterImage",
@@ -97,4 +103,3 @@ __all__ = [
     "FileUsage",
     "TimelineClip",
 ]
-

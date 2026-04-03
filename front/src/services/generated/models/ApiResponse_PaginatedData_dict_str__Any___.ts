@@ -16,5 +16,9 @@ export type ApiResponse_PaginatedData_dict_str__Any___ = {
      * 实际数据
      */
     data?: (PaginatedData_dict_str__Any__ | null);
+    /**
+     * 附加元信息
+     */
+    meta?: (Record<string, any> | null);
 };
 

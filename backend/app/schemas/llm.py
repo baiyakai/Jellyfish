@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.llm import LogLevel, ModelCategoryKey, ProviderStatus
 
@@ -47,10 +47,9 @@ class ProviderUpdate(BaseModel):
 class ProviderRead(ProviderBase):
     """对外返回的供应商信息（不包含 api_key/api_secret）。"""
 
-    id: str = Field(..., description="供应商 ID")
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    id: str = Field(..., description="供应商 ID")
 
 
 class ModelBase(BaseModel):
@@ -85,10 +84,9 @@ class ModelUpdate(BaseModel):
 class ModelRead(ModelBase):
     """对外返回的模型信息。"""
 
-    id: str = Field(..., description="模型 ID")
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    id: str = Field(..., description="模型 ID")
 
 
 class ModelSettingsBase(BaseModel):
@@ -110,8 +108,6 @@ class ModelSettingsUpdate(ModelSettingsBase):
 class ModelSettingsRead(ModelSettingsBase):
     """对外返回的模型全局设置。"""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int = Field(..., description="设置行 ID（通常为 1）")
-
-    class Config:
-        from_attributes = True
-

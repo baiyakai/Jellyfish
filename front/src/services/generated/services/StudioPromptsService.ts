@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApiResponse_list_PromptCategoryOptionRead__ } from '../models/ApiResponse_list_PromptCategoryOptionRead__';
+import type { ApiResponse_NoneType_ } from '../models/ApiResponse_NoneType_';
 import type { ApiResponse_PaginatedData_PromptTemplateRead__ } from '../models/ApiResponse_PaginatedData_PromptTemplateRead__';
 import type { ApiResponse_PromptTemplateRead_ } from '../models/ApiResponse_PromptTemplateRead_';
 import type { PromptCategory } from '../models/PromptCategory';
@@ -145,14 +146,14 @@ export class StudioPromptsService {
     }
     /**
      * 删除提示词模板
-     * @returns void
+     * @returns ApiResponse_NoneType_ Successful Response
      * @throws ApiError
      */
     public static deletePromptTemplateApiV1StudioPromptsTemplateIdDelete({
         templateId,
     }: {
         templateId: string,
-    }): CancelablePromise<void> {
+    }): CancelablePromise<ApiResponse_NoneType_> {
         return __request(OpenAPI, {
             method: 'DELETE',
             url: '/api/v1/studio/prompts/{template_id}',
