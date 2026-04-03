@@ -43,6 +43,24 @@ def success_response(
     return ApiResponse(code=code, message=message, data=data)
 
 
+def created_response(
+    data: T,
+    *,
+    message: str = "success",
+) -> ApiResponse[T]:
+    """构造创建成功响应。"""
+    return success_response(data, code=201, message=message)
+
+
+def empty_response(
+    *,
+    code: int = 200,
+    message: str = "success",
+) -> ApiResponse[None]:
+    """构造 data 为 null 的成功响应。"""
+    return ApiResponse(code=code, message=message, data=None)
+
+
 def paginated_response(
     items: list[T],
     *,

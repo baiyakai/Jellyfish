@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Sequence
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select, update
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models.llm import Model, ModelCategoryKey, ModelSettings, Provider
-from app.schemas.common import ApiResponse, PaginatedData, success_response, paginated_response
+from app.models.llm import ModelCategoryKey
+from app.schemas.common import ApiResponse, PaginatedData, created_response, empty_response, success_response
 from app.schemas.llm import (
     ModelCreate,
     ModelRead,
@@ -20,6 +17,20 @@ from app.schemas.llm import (
     ProviderCreate,
     ProviderRead,
     ProviderUpdate,
+)
+from app.services.llm.manage import (
+    create_model as create_model_service,
+    create_provider as create_provider_service,
+    delete_model as delete_model_service,
+    delete_provider as delete_provider_service,
+    get_model as get_model_service,
+    get_model_settings as get_model_settings_service,
+    get_provider as get_provider_service,
+    list_models_paginated,
+    list_providers_paginated,
+    update_model as update_model_service,
+    update_model_settings as update_model_settings_service,
+    update_provider as update_provider_service,
 )
 
 router = APIRouter()
@@ -47,26 +58,15 @@ async def list_providers(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="每页条数"),
 ) -> ApiResponse[PaginatedData[ProviderRead]]:
-    stmt = select(Provider)
-    count_stmt = select(func.count()).select_from(Provider)
-    if q and q.strip():
-        q_pattern = f"%{q.strip()}%"
-        stmt = stmt.where(
-            Provider.name.ilike(q_pattern) | Provider.description.ilike(q_pattern)
-        )
-        count_stmt = count_stmt.where(
-            Provider.name.ilike(q_pattern) | Provider.description.ilike(q_pattern)
-        )
-    order_col = order if order and order in PROVIDER_ORDER_FIELDS else "created_at"
-    order_attr = getattr(Provider, order_col)
-    stmt = stmt.order_by(order_attr.desc() if is_desc else order_attr.asc())
-    total_result = await db.execute(count_stmt)
-    total = total_result.scalar() or 0
-    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(stmt)
-    providers: Sequence[Provider] = result.scalars().all()
-    items = [ProviderRead.model_validate(p) for p in providers]
-    return paginated_response(items, page=page, page_size=page_size, total=total)
+    return await list_providers_paginated(
+        db,
+        q=q,
+        order=order,
+        is_desc=is_desc,
+        page=page,
+        page_size=page_size,
+        allow_fields=PROVIDER_ORDER_FIELDS,
+    )
 
 
 @router.post(
@@ -79,26 +79,8 @@ async def create_provider(
     body: ProviderCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ProviderRead]:
-    exists = await db.get(Provider, body.id)
-    if exists is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Provider with id={body.id} already exists",
-        )
-    provider = Provider(
-        id=body.id,
-        name=body.name,
-        base_url=body.base_url,
-        api_key=body.api_key,
-        api_secret=body.api_secret,
-        description=body.description,
-        status=body.status,
-        created_by=body.created_by,
-    )
-    db.add(provider)
-    await db.flush()
-    await db.refresh(provider)
-    return success_response(ProviderRead.model_validate(provider), code=201)
+    provider = await create_provider_service(db, body=body)
+    return created_response(ProviderRead.model_validate(provider))
 
 
 @router.get(
@@ -110,9 +92,7 @@ async def get_provider(
     provider_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ProviderRead]:
-    provider = await db.get(Provider, provider_id)
-    if provider is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
+    provider = await get_provider_service(db, provider_id=provider_id)
     return success_response(ProviderRead.model_validate(provider))
 
 
@@ -126,16 +106,7 @@ async def update_provider(
     body: ProviderUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ProviderRead]:
-    provider = await db.get(Provider, provider_id)
-    if provider is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
-
-    update_data = body.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(provider, field, value)
-
-    await db.flush()
-    await db.refresh(provider)
+    provider = await update_provider_service(db, provider_id=provider_id, body=body)
     return success_response(ProviderRead.model_validate(provider))
 
 
@@ -149,12 +120,8 @@ async def delete_provider(
     provider_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
-    provider = await db.get(Provider, provider_id)
-    if provider is None:
-        return success_response(None)
-    await db.delete(provider)
-    await db.flush()
-    return success_response(None)
+    await delete_provider_service(db, provider_id=provider_id)
+    return empty_response()
 
 
 # ---------- Model ----------
@@ -175,30 +142,17 @@ async def list_models(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="每页条数"),
 ) -> ApiResponse[PaginatedData[ModelRead]]:
-    stmt = select(Model)
-    count_stmt = select(func.count()).select_from(Model)
-    if provider_id is not None:
-        stmt = stmt.where(Model.provider_id == provider_id)
-        count_stmt = count_stmt.where(Model.provider_id == provider_id)
-    if category is not None:
-        stmt = stmt.where(Model.category == category)
-        count_stmt = count_stmt.where(Model.category == category)
-    if q and q.strip():
-        q_pattern = f"%{q.strip()}%"
-        stmt = stmt.where(Model.name.ilike(q_pattern) | Model.description.ilike(q_pattern))
-        count_stmt = count_stmt.where(
-            Model.name.ilike(q_pattern) | Model.description.ilike(q_pattern)
-        )
-    order_col = order if order and order in MODEL_ORDER_FIELDS else "created_at"
-    order_attr = getattr(Model, order_col)
-    stmt = stmt.order_by(order_attr.desc() if is_desc else order_attr.asc())
-    total_result = await db.execute(count_stmt)
-    total = total_result.scalar() or 0
-    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(stmt)
-    models: Sequence[Model] = result.scalars().all()
-    items = [ModelRead.model_validate(m) for m in models]
-    return paginated_response(items, page=page, page_size=page_size, total=total)
+    return await list_models_paginated(
+        db,
+        provider_id=provider_id,
+        category=category,
+        q=q,
+        order=order,
+        is_desc=is_desc,
+        page=page,
+        page_size=page_size,
+        allow_fields=MODEL_ORDER_FIELDS,
+    )
 
 
 @router.post(
@@ -211,39 +165,8 @@ async def create_model(
     body: ModelCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ModelRead]:
-    exists = await db.get(Model, body.id)
-    if exists is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Model with id={body.id} already exists",
-        )
-
-    # 确保 provider 存在
-    provider = await db.get(Provider, body.provider_id)
-    if provider is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provider not found")
-
-    # 若设为该类别默认，先取消同类别其他模型的默认
-    if body.is_default:
-        await db.execute(
-            update(Model).where(Model.category == body.category).values(is_default=False)
-        )
-        await db.flush()
-
-    model = Model(
-        id=body.id,
-        name=body.name,
-        category=body.category,
-        provider_id=body.provider_id,
-        params=body.params,
-        description=body.description,
-        is_default=body.is_default,
-        created_by=body.created_by,
-    )
-    db.add(model)
-    await db.flush()
-    await db.refresh(model)
-    return success_response(ModelRead.model_validate(model), code=201)
+    model = await create_model_service(db, body=body)
+    return created_response(ModelRead.model_validate(model))
 
 
 @router.get(
@@ -255,9 +178,7 @@ async def get_model(
     model_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ModelRead]:
-    model = await db.get(Model, model_id)
-    if model is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
+    model = await get_model_service(db, model_id=model_id)
     return success_response(ModelRead.model_validate(model))
 
 
@@ -271,31 +192,7 @@ async def update_model(
     body: ModelUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ModelRead]:
-    model = await db.get(Model, model_id)
-    if model is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
-
-    update_data = body.model_dump(exclude_unset=True)
-
-    # 如果更新 provider_id，需要校验新 provider 是否存在
-    new_provider_id = update_data.get("provider_id")
-    if new_provider_id is not None:
-        provider = await db.get(Provider, new_provider_id)
-        if provider is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provider not found")
-
-    # 若设为该类别默认，先取消同类别其他模型的默认
-    if update_data.get("is_default") is True:
-        await db.execute(
-            update(Model).where(Model.category == model.category).values(is_default=False)
-        )
-        await db.flush()
-
-    for field, value in update_data.items():
-        setattr(model, field, value)
-
-    await db.flush()
-    await db.refresh(model)
+    model = await update_model_service(db, model_id=model_id, body=body)
     return success_response(ModelRead.model_validate(model))
 
 
@@ -309,26 +206,11 @@ async def delete_model(
     model_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
-    model = await db.get(Model, model_id)
-    if model is None:
-        return success_response(None)
-    await db.delete(model)
-    await db.flush()
-    return success_response(None)
+    await delete_model_service(db, model_id=model_id)
+    return empty_response()
 
 
 # ---------- ModelSettings（单例） ----------
-
-
-async def _get_or_create_settings(db: AsyncSession) -> ModelSettings:
-    """内部工具：获取或创建单例设置行（id=1）。"""
-    settings = await db.get(ModelSettings, 1)
-    if settings is None:
-        settings = ModelSettings(id=1)
-        db.add(settings)
-        await db.flush()
-        await db.refresh(settings)
-    return settings
 
 
 @router.get(
@@ -339,7 +221,7 @@ async def _get_or_create_settings(db: AsyncSession) -> ModelSettings:
 async def get_model_settings(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ModelSettingsRead]:
-    settings = await _get_or_create_settings(db)
+    settings = await get_model_settings_service(db)
     return success_response(ModelSettingsRead.model_validate(settings))
 
 
@@ -352,13 +234,5 @@ async def update_model_settings(
     body: ModelSettingsUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ModelSettingsRead]:
-    settings = await _get_or_create_settings(db)
-
-    update_data = body.model_dump()
-    for field, value in update_data.items():
-        setattr(settings, field, value)
-
-    await db.flush()
-    await db.refresh(settings)
+    settings = await update_model_settings_service(db, body=body)
     return success_response(ModelSettingsRead.model_validate(settings))
-

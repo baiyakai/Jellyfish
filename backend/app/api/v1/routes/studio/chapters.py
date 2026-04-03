@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.utils import apply_keyword_filter, apply_order, paginate
 from app.dependencies import get_db
 from app.models.studio import Chapter, Project, Shot
-from app.schemas.common import ApiResponse, PaginatedData, paginated_response, success_response
+from app.schemas.common import ApiResponse, PaginatedData, created_response, empty_response, paginated_response, success_response
+from app.services.common import (
+    create_and_refresh,
+    delete_if_exists,
+    entity_already_exists,
+    entity_not_found,
+    ensure_not_exists,
+    flush_and_refresh,
+    get_or_404,
+    patch_model,
+    require_entity,
+)
 from app.schemas.studio.projects import ChapterCreate, ChapterRead, ChapterUpdate
 
 router = APIRouter()
@@ -77,17 +88,21 @@ async def create_chapter(
     body: ChapterCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ChapterRead]:
-    exists = await db.get(Chapter, body.id)
-    if exists is not None:
-        raise HTTPException(status_code=400, detail=f"Chapter with id={body.id} already exists")
-    project = await db.get(Project, body.project_id)
-    if project is None:
-        raise HTTPException(status_code=400, detail="Project not found")
-    obj = Chapter(**body.model_dump())
-    db.add(obj)
-    await db.flush()
-    await db.refresh(obj)
-    return success_response(ChapterRead.model_validate(obj), code=201)
+    await ensure_not_exists(
+        db,
+        Chapter,
+        body.id,
+        detail=entity_already_exists("Chapter"),
+    )
+    await require_entity(
+        db,
+        Project,
+        body.project_id,
+        detail=entity_not_found("Project"),
+        status_code=400,
+    )
+    obj = await create_and_refresh(db, Chapter(**body.model_dump()))
+    return created_response(ChapterRead.model_validate(obj))
 
 
 @router.get(
@@ -99,9 +114,7 @@ async def get_chapter(
     chapter_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ChapterRead]:
-    obj = await db.get(Chapter, chapter_id)
-    if obj is None:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+    obj = await get_or_404(db, Chapter, chapter_id, detail=entity_not_found("Chapter"))
     count_stmt = select(func.count(Shot.id)).where(Shot.chapter_id == chapter_id)
     res = await db.execute(count_stmt)
     shot_count = int(res.scalar() or 0)
@@ -118,18 +131,18 @@ async def update_chapter(
     body: ChapterUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ChapterRead]:
-    obj = await db.get(Chapter, chapter_id)
-    if obj is None:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+    obj = await get_or_404(db, Chapter, chapter_id, detail=entity_not_found("Chapter"))
     update = body.model_dump(exclude_unset=True)
     if "project_id" in update:
-        project = await db.get(Project, update["project_id"])
-        if project is None:
-            raise HTTPException(status_code=400, detail="Project not found")
-    for k, v in update.items():
-        setattr(obj, k, v)
-    await db.flush()
-    await db.refresh(obj)
+        await require_entity(
+            db,
+            Project,
+            update["project_id"],
+            detail=entity_not_found("Project"),
+            status_code=400,
+        )
+    patch_model(obj, update)
+    await flush_and_refresh(db, obj)
     return success_response(ChapterRead.model_validate(obj))
 
 
@@ -142,10 +155,5 @@ async def delete_chapter(
     chapter_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
-    obj = await db.get(Chapter, chapter_id)
-    if obj is None:
-        return success_response(None)
-    await db.delete(obj)
-    await db.flush()
-    return success_response(None)
-
+    await delete_if_exists(db, Chapter, chapter_id)
+    return empty_response()

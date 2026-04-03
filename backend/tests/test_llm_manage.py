@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.core.db import Base
+from app.models.llm import LogLevel, Model, ModelCategoryKey, ModelSettings, Provider
+from app.schemas.llm import ModelCreate, ModelSettingsUpdate, ModelUpdate, ProviderCreate
+from app.services.llm.manage import (
+    create_model,
+    create_provider,
+    get_or_create_settings,
+    list_models_paginated,
+    update_model,
+    update_model_settings,
+)
+
+
+async def _build_session() -> tuple[AsyncSession, object]:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    session_local = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    return session_local(), engine
+
+
+@pytest.mark.asyncio
+async def test_create_model_clears_previous_default_in_same_category() -> None:
+    db, engine = await _build_session()
+    async with db:
+        await create_provider(
+            db,
+            body=ProviderCreate(
+                id="p1",
+                name="OpenAI",
+                base_url="https://api.openai.com/v1",
+                api_key="k",
+            ),
+        )
+        await create_model(
+            db,
+            body=ModelCreate(
+                id="m1",
+                name="gpt-4o-mini",
+                category=ModelCategoryKey.text,
+                provider_id="p1",
+                is_default=True,
+            ),
+        )
+        await create_model(
+            db,
+            body=ModelCreate(
+                id="m2",
+                name="gpt-4.1-mini",
+                category=ModelCategoryKey.text,
+                provider_id="p1",
+                is_default=True,
+            ),
+        )
+
+        first_model = await db.get(Model, "m1")
+        second_model = await db.get(Model, "m2")
+        assert first_model is not None and first_model.is_default is False
+        assert second_model is not None and second_model.is_default is True
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_update_model_uses_target_category_when_setting_default() -> None:
+    db, engine = await _build_session()
+    async with db:
+        provider = Provider(id="p1", name="OpenAI", base_url="https://api.openai.com/v1", api_key="k")
+        db.add(provider)
+        db.add_all(
+            [
+                Model(
+                    id="m_text",
+                    name="gpt-4o-mini",
+                    category=ModelCategoryKey.text,
+                    provider_id="p1",
+                    is_default=False,
+                ),
+                Model(
+                    id="m_image_old_default",
+                    name="gpt-image-1",
+                    category=ModelCategoryKey.image,
+                    provider_id="p1",
+                    is_default=True,
+                ),
+                Model(
+                    id="m_image_candidate",
+                    name="seedream",
+                    category=ModelCategoryKey.text,
+                    provider_id="p1",
+                    is_default=False,
+                ),
+            ]
+        )
+        await db.commit()
+
+        updated = await update_model(
+            db,
+            model_id="m_image_candidate",
+            body=ModelUpdate(category=ModelCategoryKey.image, is_default=True),
+        )
+
+        old_default = await db.get(Model, "m_image_old_default")
+        candidate = await db.get(Model, "m_image_candidate")
+        text_model = await db.get(Model, "m_text")
+
+        assert updated.category == ModelCategoryKey.image
+        assert old_default is not None and old_default.is_default is False
+        assert candidate is not None and candidate.is_default is True
+        assert text_model is not None and text_model.is_default is False
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_settings_behaves_like_singleton() -> None:
+    db, engine = await _build_session()
+    async with db:
+        first = await get_or_create_settings(db)
+        second = await get_or_create_settings(db)
+
+        rows = (await db.execute(select(ModelSettings))).scalars().all()
+
+        assert first.id == 1
+        assert second.id == 1
+        assert len(rows) == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_update_model_settings_persists_latest_values() -> None:
+    db, engine = await _build_session()
+    async with db:
+        updated = await update_model_settings(
+            db,
+            body=ModelSettingsUpdate(api_timeout=45, log_level=LogLevel.debug),
+        )
+
+        stored = await db.get(ModelSettings, 1)
+        assert updated.id == 1
+        assert updated.api_timeout == 45
+        assert updated.log_level == LogLevel.debug
+        assert stored is not None and stored.api_timeout == 45
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_list_models_paginated_returns_filtered_items() -> None:
+    db, engine = await _build_session()
+    async with db:
+        provider = Provider(id="p1", name="OpenAI", base_url="https://api.openai.com/v1", api_key="k")
+        db.add(provider)
+        db.add_all(
+            [
+                Model(id="m1", name="gpt-4o-mini", category=ModelCategoryKey.text, provider_id="p1"),
+                Model(id="m2", name="seedream", category=ModelCategoryKey.image, provider_id="p1"),
+            ]
+        )
+        await db.commit()
+
+        resp = await list_models_paginated(
+            db,
+            provider_id="p1",
+            category=ModelCategoryKey.image,
+            q="seed",
+            order="created_at",
+            is_desc=False,
+            page=1,
+            page_size=10,
+            allow_fields={"created_at", "name"},
+        )
+
+        assert resp.data is not None
+        assert resp.data.pagination.total == 1
+        assert [item.id for item in resp.data.items] == ["m2"]
+    await engine.dispose()

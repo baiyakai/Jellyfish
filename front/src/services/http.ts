@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 
-const baseURL = import.meta.env.VITE_API_BASE_URL ?? '/api'
+const backendBaseUrl = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000'
+const baseURL = import.meta.env.VITE_API_BASE_URL ?? `${backendBaseUrl}/api`
 
 const http: AxiosInstance = axios.create({
   baseURL,
@@ -37,4 +38,3 @@ export const del = <T = unknown>(url: string, config?: AxiosRequestConfig): Prom
   http.delete<T>(url, config) as Promise<T>
 
 export default http
-

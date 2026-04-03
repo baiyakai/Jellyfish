@@ -1,3 +1,4 @@
-// 本地开发：占位文件，避免 /env.js 404；实际后端地址可用 VITE_BACKEND_URL。
-// 容器部署时由 Nginx/入口脚本覆盖为：window.__ENV = { BACKEND_URL: "https://..." }
-window.__ENV = window.__ENV || {}
+// 本地开发默认直连本机后端；容器部署时由 Nginx/入口脚本覆盖。
+window.__ENV = window.__ENV || {
+  BACKEND_URL: 'http://localhost:8000',
+}

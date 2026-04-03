@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.studio import ChapterStatus, ProjectStyle, ProjectVisualStyle
 
@@ -39,10 +39,9 @@ class ProjectUpdate(BaseModel):
 
 
 class ProjectRead(ProjectBase):
-    id: str
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    id: str
 
 
 class ChapterBase(BaseModel):
@@ -72,9 +71,7 @@ class ChapterUpdate(BaseModel):
 
 
 class ChapterRead(ChapterBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     shot_count: int = Field(0, description="分镜数（shots 条数聚合）")
-
-    class Config:
-        from_attributes = True
-

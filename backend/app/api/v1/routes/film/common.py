@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.studio import Chapter, Project, Shot
+from app.services.common import entity_not_found
 from app.models.task_links import GenerationTaskLink
 from app.core.task_manager.types import TaskStatus
 
@@ -143,7 +144,7 @@ async def bind_task(
     """
     if target_type == "project":
         if await db.get(Project, target_id) is None:
-            raise HTTPException(status_code=404, detail="Project not found")
+            raise HTTPException(status_code=404, detail=entity_not_found("Project"))
         db.add(
             GenerationTaskLink(
                 task_id=task_id,
@@ -155,7 +156,7 @@ async def bind_task(
         return
     if target_type == "chapter":
         if await db.get(Chapter, target_id) is None:
-            raise HTTPException(status_code=404, detail="Chapter not found")
+            raise HTTPException(status_code=404, detail=entity_not_found("Chapter"))
         db.add(
             GenerationTaskLink(
                 task_id=task_id,
@@ -167,7 +168,7 @@ async def bind_task(
         return
     if target_type == "shot":
         if await db.get(Shot, target_id) is None:
-            raise HTTPException(status_code=404, detail="Shot not found")
+            raise HTTPException(status_code=404, detail=entity_not_found("Shot"))
         db.add(
             GenerationTaskLink(
                 task_id=task_id,
@@ -178,4 +179,3 @@ async def bind_task(
         )
         return
     raise HTTPException(status_code=400, detail="Invalid bind target type")
-

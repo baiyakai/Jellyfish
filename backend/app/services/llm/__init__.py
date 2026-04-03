@@ -1,3 +1,18 @@
+from app.services.llm.manage import (
+    create_model,
+    create_provider,
+    delete_model,
+    delete_provider,
+    get_model,
+    get_model_settings,
+    get_or_create_settings,
+    get_provider,
+    list_models_paginated,
+    list_providers_paginated,
+    update_model,
+    update_model_settings,
+    update_provider,
+)
 from app.services.llm.resolver import (
     build_chat_model_from_provider,
     get_default_model_by_category,
@@ -7,10 +22,22 @@ from app.services.llm.resolver import (
 )
 
 __all__ = [
+    "create_model",
+    "create_provider",
     "get_default_model_by_category",
+    "delete_model",
+    "delete_provider",
     "get_model_by_category",
+    "get_model",
+    "get_model_settings",
+    "get_or_create_settings",
     "get_provider_by_id_or_obj",
     "get_provider_by_model_or_id",
+    "get_provider",
+    "list_models_paginated",
+    "list_providers_paginated",
+    "update_model",
+    "update_model_settings",
+    "update_provider",
     "build_chat_model_from_provider",
 ]
-

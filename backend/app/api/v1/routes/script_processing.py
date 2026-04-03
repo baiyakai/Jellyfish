@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.chains.agents import (
@@ -36,12 +34,13 @@ from app.chains.agents.script_processing_agents import (
     StudioScriptExtractionDraft,
 )
 from app.dependencies import get_db, get_llm, get_nothinking_llm
-from app.models.studio import CameraAngle, CameraMovement, CameraShotType, Chapter, Shot, ShotDetail, VFXType
 from app.schemas.common import ApiResponse, success_response
 from app.schemas.skills.character_portrait import CharacterPortraitAnalysisResult
 from app.schemas.skills.costume_info_analysis import CostumeInfoAnalysisResult
 from app.schemas.skills.prop_info_analysis import PropInfoAnalysisResult
 from app.schemas.skills.scene_info_analysis import SceneInfoAnalysisResult
+from app.services.common import required_field
+from app.services.studio.script_division import write_division_result_to_chapter
 
 logger = logging.getLogger(__name__)
 
@@ -95,46 +94,12 @@ async def divide_script(
 
         if request.write_to_db:
             if not request.chapter_id:
-                raise HTTPException(status_code=400, detail="chapter_id is required when write_to_db=true")
-
-            chapter = await db.get(Chapter, request.chapter_id)
-            if chapter is None:
-                raise HTTPException(status_code=400, detail="Chapter not found")
-
-            existing = await db.execute(
-                select(Shot.id).where(Shot.chapter_id == request.chapter_id).limit(1)
+                raise HTTPException(status_code=400, detail=required_field("chapter_id", when="write_to_db=true"))
+            await write_division_result_to_chapter(
+                db,
+                chapter_id=request.chapter_id,
+                result=result,
             )
-            if existing.first() is not None:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Chapter already has shots; refusing to write (write_strategy=fail)",
-                )
-
-            for s in result.shots:
-                title = (s.shot_name or "").strip() or f"镜头 {s.index}"
-                shot_id = str(uuid.uuid4())
-                db.add(
-                    Shot(
-                        id=shot_id,
-                        chapter_id=request.chapter_id,
-                        index=s.index,
-                        title=title,
-                        script_excerpt=s.script_excerpt,
-                    )
-                )
-                db.add(
-                    ShotDetail(
-                        id=shot_id,
-                        camera_shot=CameraShotType.ms,
-                        angle=CameraAngle.eye_level,
-                        movement=CameraMovement.static,
-                        follow_atmosphere=True,
-                        vfx_type=VFXType.none,
-                        duration=4,
-                    )
-                )
-            # 触发唯一约束/外键检查，确保在返回前失败
-            await db.flush()
 
         return success_response(data=result)
     except HTTPException:
@@ -659,4 +624,3 @@ async def full_process(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process script: {str(e)}"
         )
-

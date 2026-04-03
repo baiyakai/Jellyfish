@@ -1,21 +1,150 @@
 """Studio 业务服务。"""
 
+from app.services.studio.shot_character_links import (
+    list_by_shot as list_shot_character_links,
+    upsert as upsert_shot_character_link,
+)
+from app.services.studio.script_division import write_division_result_to_chapter
+from app.services.studio.files import (
+    build_download_response,
+    delete_file,
+    get_file_detail,
+    get_storage_info,
+    list_files_paginated,
+    update_file_meta,
+    upload_file,
+)
+from app.services.studio.image_task_prompts import (
+    build_actor_prompt_and_refs,
+    build_asset_prompt_and_refs,
+    build_character_prompt_and_refs,
+    build_shot_frame_prompt_and_refs,
+)
+from app.services.studio.image_task_references import (
+    pick_front_ref_file_id,
+    pick_ordered_ref_file_ids,
+    resolve_reference_file_ids_and_names_from_linked_items,
+    resolve_reference_image_refs_by_file_ids,
+)
+from app.services.studio.image_task_runner import create_image_task_and_link
+from app.services.studio.image_task_validation import (
+    validate_actor_image,
+    validate_asset_image_and_relation_type,
+    validate_character_image,
+)
+from app.services.studio.shot_assets import (
+    create_project_asset_link,
+    delete_project_asset_link,
+    list_project_asset_links_paginated,
+    list_shot_linked_assets_paginated,
+)
+from app.services.studio.shots import (
+    create as create_shot,
+    delete as delete_shot,
+    get as get_shot,
+    list_paginated as list_shots_paginated,
+    update as update_shot,
+)
+from app.services.studio.shot_details import (
+    create as create_shot_detail,
+    delete as delete_shot_detail,
+    get as get_shot_detail,
+    list_paginated as list_shot_details_paginated,
+    update as update_shot_detail,
+)
+from app.services.studio.shot_dialogs import (
+    create as create_shot_dialog_line,
+    delete as delete_shot_dialog_line,
+    list_paginated as list_shot_dialog_lines_paginated,
+    update as update_shot_dialog_line,
+)
+from app.services.studio.shot_frames import (
+    create as create_shot_frame_image,
+    delete as delete_shot_frame_image,
+    list_paginated as list_shot_frame_images_paginated,
+    update as update_shot_frame_image,
+)
 from app.services.studio.entities import (
     StudioEntitiesService,
-    download_url,
-    entity_spec,
-    normalize_entity_type,
-    resolve_thumbnails,
-    resolve_thumbnail_infos,
 )
+from app.services.studio.entity_crud import (
+    create_entity,
+    delete_entity,
+    get_entity,
+    list_entities_paginated,
+    update_entity,
+)
+from app.services.studio.entity_existence import check_names_existence
+from app.services.studio.entity_images import (
+    create_entity_image,
+    delete_entity_image,
+    list_entity_images_paginated,
+    update_entity_image,
+)
+from app.services.studio.entity_specs import entity_spec, normalize_entity_type
+from app.services.studio.entity_thumbnails import download_url, resolve_thumbnail_infos, resolve_thumbnails
 
 __all__ = [
     "StudioEntitiesService",
+    "create_entity",
+    "create_entity_image",
+    "check_names_existence",
     "download_url",
     "entity_spec",
+    "build_download_response",
+    "create_project_asset_link",
+    "create_image_task_and_link",
+    "create_shot",
+    "delete_file",
+    "delete_entity",
+    "delete_entity_image",
+    "delete_project_asset_link",
+    "delete_shot",
+    "get_file_detail",
+    "get_entity",
+    "get_storage_info",
+    "get_shot",
+    "list_files_paginated",
+    "list_entity_images_paginated",
+    "list_entities_paginated",
+    "list_project_asset_links_paginated",
+    "list_shot_character_links",
+    "list_shot_details_paginated",
+    "list_shot_dialog_lines_paginated",
+    "list_shot_frame_images_paginated",
+    "list_shot_linked_assets_paginated",
+    "list_shots_paginated",
     "normalize_entity_type",
     "resolve_thumbnails",
     "resolve_thumbnail_infos",
+    "resolve_reference_file_ids_and_names_from_linked_items",
+    "resolve_reference_image_refs_by_file_ids",
+    "create_shot_detail",
+    "get_shot_detail",
+    "update_shot_detail",
+    "delete_shot_detail",
+    "create_shot_dialog_line",
+    "update_shot_dialog_line",
+    "delete_shot_dialog_line",
+    "create_shot_frame_image",
+    "update_shot_frame_image",
+    "delete_shot_frame_image",
+    "build_actor_prompt_and_refs",
+    "build_asset_prompt_and_refs",
+    "build_character_prompt_and_refs",
+    "build_shot_frame_prompt_and_refs",
+    "pick_front_ref_file_id",
+    "pick_ordered_ref_file_ids",
+    "update_shot",
+    "upload_file",
+    "update_file_meta",
+    "update_entity_image",
+    "update_entity",
+    "validate_actor_image",
+    "validate_asset_image_and_relation_type",
+    "validate_character_image",
+    "write_division_result_to_chapter",
+    "upsert_shot_character_link",
 ]
 
 # image_tasks 依赖存储/第三方 SDK（如 boto3）；在某些轻量环境中可能未安装。

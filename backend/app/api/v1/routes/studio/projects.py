@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.utils import apply_keyword_filter, apply_order, paginate
 from app.dependencies import get_db
 from app.models.studio import Project
-from app.schemas.common import ApiResponse, PaginatedData, paginated_response, success_response
+from app.schemas.common import ApiResponse, PaginatedData, created_response, empty_response, paginated_response, success_response
+from app.services.common import (
+    create_and_refresh,
+    delete_if_exists,
+    entity_already_exists,
+    entity_not_found,
+    ensure_not_exists,
+    flush_and_refresh,
+    get_or_404,
+    patch_model,
+)
 from app.schemas.studio.projects import (
     ProjectCreate,
     ProjectRead,
@@ -51,14 +61,14 @@ async def create_project(
     body: ProjectCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ProjectRead]:
-    exists = await db.get(Project, body.id)
-    if exists is not None:
-        raise HTTPException(status_code=400, detail=f"Project with id={body.id} already exists")
-    obj = Project(**body.model_dump())
-    db.add(obj)
-    await db.flush()
-    await db.refresh(obj)
-    return success_response(ProjectRead.model_validate(obj), code=201)
+    await ensure_not_exists(
+        db,
+        Project,
+        body.id,
+        detail=entity_already_exists("Project"),
+    )
+    obj = await create_and_refresh(db, Project(**body.model_dump()))
+    return created_response(ProjectRead.model_validate(obj))
 
 
 @router.get(
@@ -70,9 +80,7 @@ async def get_project(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ProjectRead]:
-    obj = await db.get(Project, project_id)
-    if obj is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    obj = await get_or_404(db, Project, project_id, detail=entity_not_found("Project"))
     return success_response(ProjectRead.model_validate(obj))
 
 
@@ -86,13 +94,9 @@ async def update_project(
     body: ProjectUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ProjectRead]:
-    obj = await db.get(Project, project_id)
-    if obj is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-    for k, v in body.model_dump(exclude_unset=True).items():
-        setattr(obj, k, v)
-    await db.flush()
-    await db.refresh(obj)
+    obj = await get_or_404(db, Project, project_id, detail=entity_not_found("Project"))
+    patch_model(obj, body.model_dump(exclude_unset=True))
+    await flush_and_refresh(db, obj)
     return success_response(ProjectRead.model_validate(obj))
 
 
@@ -105,10 +109,5 @@ async def delete_project(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
-    obj = await db.get(Project, project_id)
-    if obj is None:
-        return success_response(None)
-    await db.delete(obj)
-    await db.flush()
-    return success_response(None)
-
+    await delete_if_exists(db, Project, project_id)
+    return empty_response()

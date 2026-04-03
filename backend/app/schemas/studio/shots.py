@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.studio import (
     CameraAngle,
@@ -46,8 +46,7 @@ class ShotUpdate(BaseModel):
 
 
 class ShotRead(ShotBase):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ShotDetailBase(BaseModel):
@@ -99,8 +98,7 @@ class ShotDetailUpdate(BaseModel):
 
 
 class ShotDetailRead(ShotDetailBase):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ShotDialogLineBase(BaseModel):
@@ -137,8 +135,7 @@ class ShotDialogLineUpdate(BaseModel):
 
 
 class ShotDialogLineRead(ShotDialogLineBase):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectLinkBase(BaseModel):
@@ -156,35 +153,31 @@ class ProjectAssetLinkCreate(BaseModel):
 
 
 class ProjectActorLinkRead(ProjectLinkBase):
+    model_config = ConfigDict(from_attributes=True)
+
     actor_id: str
     thumbnail: str = Field("", description="演员缩略图下载地址")
 
-    class Config:
-        from_attributes = True
-
 
 class ProjectSceneLinkRead(ProjectLinkBase):
+    model_config = ConfigDict(from_attributes=True)
+
     scene_id: str
     thumbnail: str = Field("", description="场景缩略图下载地址")
 
-    class Config:
-        from_attributes = True
-
 
 class ProjectPropLinkRead(ProjectLinkBase):
+    model_config = ConfigDict(from_attributes=True)
+
     prop_id: str
     thumbnail: str = Field("", description="道具缩略图下载地址")
 
-    class Config:
-        from_attributes = True
-
 
 class ProjectCostumeLinkRead(ProjectLinkBase):
+    model_config = ConfigDict(from_attributes=True)
+
     costume_id: str
     thumbnail: str = Field("", description="服装缩略图下载地址")
-
-    class Config:
-        from_attributes = True
 
 
 class ShotFrameImageBase(BaseModel):
@@ -215,8 +208,7 @@ class ShotFrameImageUpdate(BaseModel):
 
 
 class ShotFrameImageRead(ShotFrameImageBase):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 ShotLinkedAssetType = Literal["character", "prop", "scene", "costume"]
@@ -237,4 +229,3 @@ class ShotLinkedAssetItem(BaseModel):
     )
     name: str = Field(..., description="实体名称")
     thumbnail: str = Field("", description="缩略图下载地址（/api/v1/studio/files/{file_id}/download）")
-

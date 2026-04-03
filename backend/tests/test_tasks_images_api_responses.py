@@ -1,0 +1,149 @@
+"""film/tasks_images 接口响应壳测试。"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncGenerator
+
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
+from app.api.v1.routes.film import tasks_images as route
+from app.dependencies import get_db, get_nothinking_llm
+from app.main import app
+
+
+class _FakeTaskRecord:
+    def __init__(self, task_id: str) -> None:
+        self.id = task_id
+
+
+class _FakeTaskManager:
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+    async def create(self, *_args, **_kwargs) -> _FakeTaskRecord:
+        return _FakeTaskRecord("prompt-task-1")
+
+
+class _FakeDB:
+    def __init__(self) -> None:
+        self.added: list[object] = []
+
+    def add(self, obj: object) -> None:
+        self.added.append(obj)
+
+
+class _DummyLLM:
+    pass
+
+
+def _close_task_stub(coro):
+    coro.close()
+    return None
+
+
+def _override_db(db: _FakeDB):
+    async def _get_db() -> AsyncGenerator[_FakeDB, None]:
+        yield db
+
+    return _get_db
+
+
+def _override_llm() -> _DummyLLM:
+    return _DummyLLM()
+
+
+def test_create_shot_frame_prompt_task_returns_created_envelope(client: TestClient, monkeypatch) -> None:
+    db = _FakeDB()
+
+    async def _fake_build(*_args, **_kwargs):
+        return {"shot_id": "shot-1", "frame_type": "first"}
+
+    monkeypatch.setattr(route, "build_shot_frame_prompt_run_args", _fake_build)
+    monkeypatch.setattr(route, "TaskManager", _FakeTaskManager)
+    monkeypatch.setattr(route.asyncio, "create_task", _close_task_stub)
+    app.dependency_overrides[get_db] = _override_db(db)
+    app.dependency_overrides[get_nothinking_llm] = _override_llm
+    try:
+        response = client.post(
+            "/api/v1/film/tasks/shot-frame-prompts",
+            json={"shot_id": "shot-1", "frame_type": "first"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["code"] == 201
+    assert body["message"] == "success"
+    assert body["data"]["task_id"] == "prompt-task-1"
+    assert len(db.added) == 1
+
+
+def test_create_shot_frame_prompt_task_invalid_frame_type_returns_api_response(
+    client: TestClient, monkeypatch
+) -> None:
+    db = _FakeDB()
+
+    def _fake_normalize(_frame_type: str) -> str:
+        raise HTTPException(status_code=400, detail="frame_type must be one of: first/last/key")
+
+    monkeypatch.setattr(route, "normalize_frame_type", _fake_normalize)
+    app.dependency_overrides[get_db] = _override_db(db)
+    app.dependency_overrides[get_nothinking_llm] = _override_llm
+    try:
+        response = client.post(
+            "/api/v1/film/tasks/shot-frame-prompts",
+            json={"shot_id": "shot-1", "frame_type": "middle"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": 400,
+        "message": "frame_type must be one of: first/last/key",
+        "data": None,
+    }
+
+
+def test_create_shot_frame_prompt_task_missing_shot_detail_returns_api_response(
+    client: TestClient, monkeypatch
+) -> None:
+    db = _FakeDB()
+
+    async def _fake_build(*_args, **_kwargs):
+        raise HTTPException(status_code=404, detail="ShotDetail not found")
+
+    monkeypatch.setattr(route, "build_shot_frame_prompt_run_args", _fake_build)
+    app.dependency_overrides[get_db] = _override_db(db)
+    app.dependency_overrides[get_nothinking_llm] = _override_llm
+    try:
+        response = client.post(
+            "/api/v1/film/tasks/shot-frame-prompts",
+            json={"shot_id": "shot-1", "frame_type": "first"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json() == {"code": 404, "message": "ShotDetail not found", "data": None}
+
+
+def test_create_shot_frame_prompt_task_validation_error_returns_api_response(client: TestClient) -> None:
+    db = _FakeDB()
+    app.dependency_overrides[get_db] = _override_db(db)
+    app.dependency_overrides[get_nothinking_llm] = _override_llm
+    try:
+        response = client.post(
+            "/api/v1/film/tasks/shot-frame-prompts",
+            json={"frame_type": "first"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == 422
+    assert body["data"] is None
+    assert "shot_id" in body["message"]

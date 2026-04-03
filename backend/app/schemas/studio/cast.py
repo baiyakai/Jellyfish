@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.studio import ProjectStyle, ProjectVisualStyle
 
@@ -54,10 +54,9 @@ class ActorUpdate(BaseModel):
 
 
 class ActorRead(ActorBase):
-    thumbnail: str = Field("", description="缩略图下载地址")
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    thumbnail: str = Field("", description="缩略图下载地址")
 
 
 class CharacterBase(BaseModel):
@@ -86,10 +85,9 @@ class CharacterUpdate(BaseModel):
 
 
 class CharacterRead(CharacterBase):
-    thumbnail: str = Field("", description="缩略图下载地址")
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    thumbnail: str = Field("", description="缩略图下载地址")
 
 
 class CharacterPropLinkBase(BaseModel):
@@ -113,8 +111,7 @@ class CharacterPropLinkUpdate(BaseModel):
 
 
 class CharacterPropLinkRead(CharacterPropLinkBase):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ShotCharacterLinkBase(BaseModel):
@@ -138,6 +135,4 @@ class ShotCharacterLinkUpdate(BaseModel):
 
 
 class ShotCharacterLinkRead(ShotCharacterLinkBase):
-    class Config:
-        from_attributes = True
-
+    model_config = ConfigDict(from_attributes=True)
