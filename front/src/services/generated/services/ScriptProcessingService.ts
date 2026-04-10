@@ -17,7 +17,6 @@ import type { ApiResponse_VariantAnalysisResult_ } from '../models/ApiResponse_V
 import type { CharacterPortraitAnalysisRequest } from '../models/CharacterPortraitAnalysisRequest';
 import type { CostumeInfoAnalysisRequest } from '../models/CostumeInfoAnalysisRequest';
 import type { EntityMergerRequest } from '../models/EntityMergerRequest';
-import type { FullProcessRequest } from '../models/FullProcessRequest';
 import type { PropInfoAnalysisRequest } from '../models/PropInfoAnalysisRequest';
 import type { SceneInfoAnalysisRequest } from '../models/SceneInfoAnalysisRequest';
 import type { ScriptConsistencyCheckRequest } from '../models/ScriptConsistencyCheckRequest';
@@ -485,27 +484,6 @@ export class ScriptProcessingService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/script-processing/extract',
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
-    /**
-     * 完整工作流处理
-     * 新流程：一致性检查→（可选优化）→分镜→项目级信息提取（最终输出）。当前同步接口主要用于调试与串联验证，暂无真实前端主入口。
-     * @returns ApiResponse_StudioScriptExtractionDraft_ Successful Response
-     * @throws ApiError
-     */
-    public static fullProcessApiV1ScriptProcessingFullProcessPost({
-        requestBody,
-    }: {
-        requestBody: FullProcessRequest,
-    }): CancelablePromise<ApiResponse_StudioScriptExtractionDraft_> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/script-processing/full-process',
             body: requestBody,
             mediaType: 'application/json',
             errors: {

@@ -9,36 +9,19 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.chains.agents import ScriptDividerAgent
 from app.chains.agents.script_processing_agents import (
     EntityMergeResult,
     ScriptConsistencyCheckResult,
-    ScriptDivisionResult,
-    ScriptOptimizationResult,
-    ScriptSimplificationResult,
     VariantAnalysisResult,
 )
-from app.schemas.skills.character_portrait import CharacterPortraitAnalysisResult
-from app.schemas.skills.costume_info_analysis import CostumeInfoAnalysisResult
-from app.schemas.skills.prop_info_analysis import PropInfoAnalysisResult
-from app.schemas.skills.scene_info_analysis import SceneInfoAnalysisResult
 from app.core.db import async_session_maker
 from app.core.task_manager import DeliveryMode, SqlAlchemyTaskStore, TaskManager
 from app.core.task_manager.types import TaskStatus
-from app.dependencies import get_llm, get_nothinking_llm
+from app.dependencies import get_llm
 from app.models.task import GenerationTask, GenerationTaskStatus
 from app.models.task_links import GenerationTaskLink
 from app.services.common import entity_not_found
-from app.services.studio.script_division import write_division_result_to_chapter
 from app.chains.agents import ConsistencyCheckerAgent, EntityMergerAgent, VariantAnalyzerAgent
-from app.chains.agents import (
-    CharacterPortraitAnalysisAgent,
-    CostumeInfoAnalysisAgent,
-    PropInfoAnalysisAgent,
-    SceneInfoAnalysisAgent,
-    ScriptOptimizerAgent,
-    ScriptSimplifierAgent,
-)
 
 
 logger = logging.getLogger(__name__)
@@ -178,76 +161,6 @@ async def create_divide_task(
         relation_type=CHAPTER_DIVISION_RELATION_TYPE,
         relation_entity_id=chapter_id,
     )
-
-
-async def run_divide_task(task_id: str) -> None:
-    """后台执行章节分镜提取任务。
-
-    说明：
-    - 这里先做“协作式取消”，在关键阶段检查取消请求。
-    - 当前单次 LLM 调用仍无法保证即时硬中断，因此只在阶段边界停下。
-    """
-
-    async with async_session_maker() as db:
-        store = SqlAlchemyTaskStore(db)
-        task = await store.get(task_id)
-        if task is None:
-            logger.warning("divide task not found: %s", task_id)
-            return
-
-        if await _cancel_if_requested(store, task_id, db):
-            return
-
-        await store.set_status(task_id, TaskStatus.running)
-        await store.set_progress(task_id, 5)
-        await db.commit()
-
-        run_args = task.payload.get("run_args") or {}
-        script_text = str(run_args.get("script_text") or "")
-        chapter_id = str(run_args.get("chapter_id") or "")
-        write_to_db = bool(run_args.get("write_to_db"))
-
-    try:
-        async with async_session_maker() as db:
-            llm = await get_nothinking_llm(db)
-            store = SqlAlchemyTaskStore(db)
-            if await _cancel_if_requested(store, task_id, db):
-                return
-
-            agent = ScriptDividerAgent(llm)
-            result: ScriptDivisionResult = agent.divide_script(script_text=script_text)
-            await store.set_progress(task_id, 70)
-            await store.set_result(task_id, result.model_dump())
-            await db.commit()
-
-        async with async_session_maker() as db:
-            store = SqlAlchemyTaskStore(db)
-            if await _cancel_if_requested(store, task_id, db):
-                return
-
-            if write_to_db:
-                if not chapter_id:
-                    raise HTTPException(status_code=400, detail="chapter_id is required for write_to_db=true")
-                await write_division_result_to_chapter(db, chapter_id=chapter_id, result=result)
-
-            await store.set_progress(task_id, 100)
-            await store.set_status(task_id, TaskStatus.succeeded)
-            await db.commit()
-    except HTTPException as exc:
-        async with async_session_maker() as db:
-            store = SqlAlchemyTaskStore(db)
-            await store.set_error(task_id, exc.detail if isinstance(exc.detail, str) else str(exc.detail))
-            await store.set_status(task_id, TaskStatus.failed)
-            await db.commit()
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("divide task failed: %s", task_id)
-        async with async_session_maker() as db:
-            store = SqlAlchemyTaskStore(db)
-            await store.set_error(task_id, str(exc))
-            await store.set_status(task_id, TaskStatus.failed)
-            await db.commit()
-
-
 def spawn_divide_task(task_id: str) -> None:
     """统一封装后台启动：第一阶段改为通用 Celery 执行入口。"""
     from app.tasks.execute_task import enqueue_task_execution
@@ -795,48 +708,6 @@ async def run_merge_task(task_id: str) -> None:
 
 def spawn_merge_task(task_id: str) -> None:
     asyncio.create_task(run_merge_task(task_id))
-
-
-async def run_consistency_task(task_id: str) -> None:
-    async with async_session_maker() as db:
-        store = SqlAlchemyTaskStore(db)
-        task = await store.get(task_id)
-        if task is None:
-            logger.warning("consistency task not found: %s", task_id)
-            return
-
-        if await _cancel_if_requested(store, task_id, db):
-            return
-
-        await store.set_status(task_id, TaskStatus.running)
-        await store.set_progress(task_id, 5)
-        await db.commit()
-        run_args = task.payload.get("run_args") or {}
-
-    try:
-        async with async_session_maker() as db:
-            store = SqlAlchemyTaskStore(db)
-            if await _cancel_if_requested(store, task_id, db):
-                return
-
-            llm = await get_llm(db)
-            agent = ConsistencyCheckerAgent(llm)
-            result: ScriptConsistencyCheckResult = agent.extract(script_text=str(run_args.get("script_text") or ""))
-            await store.set_progress(task_id, 100)
-            await store.set_result(task_id, result.model_dump())
-            if await _cancel_if_requested(store, task_id, db):
-                return
-            await store.set_status(task_id, TaskStatus.succeeded)
-            await db.commit()
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("consistency task failed: %s", task_id)
-        async with async_session_maker() as db:
-            store = SqlAlchemyTaskStore(db)
-            await store.set_error(task_id, str(exc))
-            await store.set_status(task_id, TaskStatus.failed)
-            await db.commit()
-
-
 def spawn_consistency_task(task_id: str) -> None:
     from app.tasks.execute_task import enqueue_task_execution
 
@@ -889,97 +760,6 @@ async def run_variant_task(task_id: str) -> None:
 
 def spawn_variant_task(task_id: str) -> None:
     asyncio.create_task(run_variant_task(task_id))
-
-
-async def _run_simple_analysis_task(
-    task_id: str,
-    *,
-    agent_factory,
-    run_analysis,
-) -> None:
-    async with async_session_maker() as db:
-        store = SqlAlchemyTaskStore(db)
-        task = await store.get(task_id)
-        if task is None:
-            logger.warning("analysis task not found: %s", task_id)
-            return
-
-        if await _cancel_if_requested(store, task_id, db):
-            return
-
-        await store.set_status(task_id, TaskStatus.running)
-        await store.set_progress(task_id, 5)
-        await db.commit()
-        run_args = task.payload.get("run_args") or {}
-
-    try:
-        async with async_session_maker() as db:
-            store = SqlAlchemyTaskStore(db)
-            if await _cancel_if_requested(store, task_id, db):
-                return
-
-            llm = await get_llm(db)
-            agent = agent_factory(llm)
-            result = run_analysis(agent, run_args)
-            await store.set_progress(task_id, 100)
-            await store.set_result(task_id, result.model_dump())
-            if await _cancel_if_requested(store, task_id, db):
-                return
-            await store.set_status(task_id, TaskStatus.succeeded)
-            await db.commit()
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("analysis task failed: %s", task_id)
-        async with async_session_maker() as db:
-            store = SqlAlchemyTaskStore(db)
-            await store.set_error(task_id, str(exc))
-            await store.set_status(task_id, TaskStatus.failed)
-            await db.commit()
-
-
-async def run_character_portrait_task(task_id: str) -> None:
-    await _run_simple_analysis_task(
-        task_id,
-        agent_factory=CharacterPortraitAnalysisAgent,
-        run_analysis=lambda agent, args: agent.analyze_character_description(
-            character_context=args.get("character_context"),
-            character_description=str(args.get("character_description") or ""),
-        ),
-    )
-
-
-async def run_prop_info_task(task_id: str) -> None:
-    await _run_simple_analysis_task(
-        task_id,
-        agent_factory=PropInfoAnalysisAgent,
-        run_analysis=lambda agent, args: agent.analyze_prop_description(
-            prop_context=args.get("prop_context"),
-            prop_description=str(args.get("prop_description") or ""),
-        ),
-    )
-
-
-async def run_scene_info_task(task_id: str) -> None:
-    await _run_simple_analysis_task(
-        task_id,
-        agent_factory=SceneInfoAnalysisAgent,
-        run_analysis=lambda agent, args: agent.analyze_scene_description(
-            scene_context=args.get("scene_context"),
-            scene_description=str(args.get("scene_description") or ""),
-        ),
-    )
-
-
-async def run_costume_info_task(task_id: str) -> None:
-    await _run_simple_analysis_task(
-        task_id,
-        agent_factory=CostumeInfoAnalysisAgent,
-        run_analysis=lambda agent, args: agent.analyze_costume_description(
-            costume_context=args.get("costume_context"),
-            costume_description=str(args.get("costume_description") or ""),
-        ),
-    )
-
-
 def spawn_character_portrait_task(task_id: str) -> None:
     from app.tasks.execute_task import enqueue_task_execution
 
@@ -1002,27 +782,6 @@ def spawn_costume_info_task(task_id: str) -> None:
     from app.tasks.execute_task import enqueue_task_execution
 
     enqueue_task_execution(task_id)
-
-
-async def run_script_optimization_task(task_id: str) -> None:
-    async def _runner(llm, run_args: dict) -> ScriptOptimizationResult:
-        agent = ScriptOptimizerAgent(llm)
-        return agent.extract(
-            script_text=str(run_args.get("script_text") or ""),
-            consistency_json=json.dumps(dict(run_args.get("consistency") or {}), ensure_ascii=False),
-        )
-
-    await _run_simple_analysis_task(task_id, task_runner=_runner)
-
-
-async def run_script_simplification_task(task_id: str) -> None:
-    async def _runner(llm, run_args: dict) -> ScriptSimplificationResult:
-        agent = ScriptSimplifierAgent(llm)
-        return agent.extract(script_text=str(run_args.get("script_text") or ""))
-
-    await _run_simple_analysis_task(task_id, task_runner=_runner)
-
-
 def spawn_script_optimization_task(task_id: str) -> None:
     from app.tasks.execute_task import enqueue_task_execution
 

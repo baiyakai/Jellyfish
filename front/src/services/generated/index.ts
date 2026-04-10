@@ -104,7 +104,6 @@ export type { FileTypeEnum } from './models/FileTypeEnum';
 export type { FileUpdate } from './models/FileUpdate';
 export type { FileUsageRead } from './models/FileUsageRead';
 export type { FileUsageWrite } from './models/FileUsageWrite';
-export type { FullProcessRequest } from './models/FullProcessRequest';
 export type { GenerationTaskLinkCreate } from './models/GenerationTaskLinkCreate';
 export type { GenerationTaskLinkRead } from './models/GenerationTaskLinkRead';
 export type { GenerationTaskLinkUpdate } from './models/GenerationTaskLinkUpdate';
