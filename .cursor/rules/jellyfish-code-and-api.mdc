@@ -1,0 +1,23 @@
+---
+description: Jellyfish 代码与接口协作规则
+alwaysApply: true
+---
+
+# Jellyfish Code And API Rules
+
+## 代码规范
+
+- API 变更后必须运行：`pnpm run openapi:update`。
+- 前端调用后端接口时，统一使用 OpenAPI generated client，不新增手写 service 封装。
+- 当前端样式重复度大于 1 次时，优先抽离为可复用组件或公共样式结构。
+- 后端严格区分层职责：
+  - `api` 层负责收参、鉴权、响应组织。
+  - `service` 层负责业务逻辑、状态流转、数据编排。
+
+## 变更同步要求
+
+- 修改 API、类型、状态模型后，优先同步：
+  - 后端实现
+  - OpenAPI
+  - 前端 generated types
+  - 对应开发文档
