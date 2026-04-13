@@ -28,7 +28,6 @@ from app.services.studio.generation.video import (
     build_video_base_draft,
     build_video_context,
     build_video_submission_payload,
-    required_image_count,
     validate_images_count,
 )
 from app.services.studio.shot_status import recompute_shot_status

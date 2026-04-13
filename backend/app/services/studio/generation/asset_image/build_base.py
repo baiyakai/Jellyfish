@@ -9,7 +9,6 @@ from app.models.studio import (
     ActorImage,
     AssetViewAngle,
     Character,
-    CharacterImage,
     Costume,
     CostumeImage,
     PromptCategory,

@@ -378,6 +378,7 @@ async def create_shot_frame_image_generation_task(
         if not shot_frame_image.format:
             shot_frame_image.format = "png"
 
+    submission_extra = dict(submission.extra or {})
     task_id = await _create_image_task_and_link_service(
         db=db,
         model_id=body.model_id,
@@ -385,7 +386,7 @@ async def create_shot_frame_image_generation_task(
         relation_entity_id=str(shot_frame_image.id),
         prompt=submission.prompt,
         images=ref_images if ref_images else None,
-        render_context=submission.extra.get("render_context"),
+        render_context=submission_extra.get("render_context"),
     )
     return created_response(TaskCreated(task_id=task_id))
 
