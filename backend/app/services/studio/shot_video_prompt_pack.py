@@ -1,4 +1,12 @@
-"""镜头视频提示词上下文包与渲染服务。"""
+"""镜头视频提示词上下文包与模板渲染底层服务。
+
+该模块只负责两类稳定能力：
+
+1. 构建 `ShotVideoPromptPackRead`
+2. 基于模板将 pack 渲染为文本
+
+视频预览与提交编排统一放在 `app.services.studio.generation.video`。
+"""
 
 from __future__ import annotations
 
@@ -15,7 +23,6 @@ from app.schemas.studio.shots import (
     ShotPromptAssetRef,
     ShotPromptCameraInfo,
     ShotVideoPromptPackRead,
-    ShotVideoPromptPreviewRead,
 )
 from app.services.common import entity_not_found
 from app.services.studio.shot_assets_overview import get_shot_assets_overview
@@ -191,32 +198,4 @@ async def build_shot_video_prompt_pack(
         visual_style=_enum_value(getattr(project, "visual_style", None)),
         style=_enum_value(getattr(project, "style", None)),
         negative_prompt=DEFAULT_VIDEO_NEGATIVE_PROMPT,
-    )
-
-
-async def render_shot_video_prompt_preview(
-    db: AsyncSession,
-    *,
-    shot_id: str,
-    template_id: str | None = None,
-) -> ShotVideoPromptPreviewRead:
-    pack = await build_shot_video_prompt_pack(db, shot_id=shot_id)
-    template = await _resolve_video_prompt_template(db, template_id=template_id)
-    warnings: list[str] = []
-    if template is None:
-        warnings.append("未配置视频提示词模板，已使用系统默认拼装提示词")
-        rendered_prompt = _fallback_video_prompt(pack)
-    else:
-        rendered_prompt = _render_template(template.content, _pack_variables(pack))
-        if not rendered_prompt:
-            warnings.append("视频提示词模板渲染结果为空，已使用系统默认拼装提示词")
-            rendered_prompt = _fallback_video_prompt(pack)
-
-    return ShotVideoPromptPreviewRead(
-        shot_id=shot_id,
-        template_id=template.id if template else None,
-        template_name=template.name if template else None,
-        rendered_prompt=rendered_prompt,
-        pack=pack,
-        warnings=warnings,
     )

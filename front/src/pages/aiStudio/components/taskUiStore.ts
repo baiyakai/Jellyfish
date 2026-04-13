@@ -43,13 +43,6 @@ type TaskUiState = {
   toggleOpen: () => void
 }
 
-function mergeCount(
-  serverItems: Record<string, TaskListItemRead>,
-  optimisticItems: Record<string, TaskUiItem>,
-): number {
-  return new Set([...Object.keys(serverItems), ...Object.keys(optimisticItems)]).size
-}
-
 export function mergeTaskUiItems(
   serverItems: Record<string, TaskListItemRead>,
   optimisticItems: Record<string, TaskUiItem>,
@@ -104,36 +97,22 @@ export const useTaskUiStore = create<TaskUiState>((set, get) => ({
   contextScopes: {},
   open: false,
   setServerTasks: (tasks) =>
-    set((state) => {
-      const nextServerItems = Object.fromEntries(tasks.map((task) => [task.task_id, task]))
-      const hadItems = mergeCount(state.serverItems, state.optimisticItems) > 0
-      const nextCount = mergeCount(nextServerItems, state.optimisticItems)
-      return {
-        serverItems: nextServerItems,
-        open: state.open || (!hadItems && nextCount > 0),
-      }
-    }),
+    set(() => ({
+      serverItems: Object.fromEntries(tasks.map((task) => [task.task_id, task])),
+    })),
   upsertTask: (task) =>
-    set((state) => {
-      const nextOptimisticItems = {
+    set((state) => ({
+      optimisticItems: {
         ...state.optimisticItems,
         [task.taskId]: task,
-      }
-      const hadItems = mergeCount(state.serverItems, state.optimisticItems) > 0
-      const nextCount = mergeCount(state.serverItems, nextOptimisticItems)
-      return {
-        optimisticItems: nextOptimisticItems,
-        open: state.open || (!hadItems && nextCount > 0),
-      }
-    }),
+      },
+    })),
   removeTask: (taskId) =>
     set((state) => {
       const nextOptimisticItems = { ...state.optimisticItems }
       delete nextOptimisticItems[taskId]
       return {
         optimisticItems: nextOptimisticItems,
-        open:
-          mergeCount(state.serverItems, nextOptimisticItems) > 0 ? state.open : false,
       }
     }),
   registerPageContext: (scopeId, contexts) =>

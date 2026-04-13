@@ -307,6 +307,28 @@ class ShotLinkedAssetItem(BaseModel):
     thumbnail: str = Field("", description="缩略图下载地址（/api/v1/studio/files/{file_id}/download）")
 
 
+class ShotFramePromptMappingRead(BaseModel):
+    """关键帧提示词渲染后的图片映射关系。"""
+
+    token: str = Field(..., description="提示词中的图片占位 token，如 图1 / 图2")
+    type: ShotLinkedAssetType = Field(..., description="实体类型：character/prop/scene/costume")
+    id: str = Field(..., description="实体 ID（如 character_id/prop_id/scene_id/costume_id）")
+    name: str = Field(..., description="实体名称")
+    file_id: str = Field(..., description="本次渲染与生成使用的文件 ID")
+
+
+class RenderedShotFramePromptRead(BaseModel):
+    """关键帧最终生成提示词渲染结果。"""
+
+    base_prompt: str = Field(..., description="原始基础提示词（不含图片映射说明）")
+    rendered_prompt: str = Field(..., description="最终提交给模型的提示词（含图片映射说明）")
+    images: list[str] = Field(default_factory=list, description="最终参考图 file_id 列表，顺序与 mappings 一致")
+    mappings: list[ShotFramePromptMappingRead] = Field(
+        default_factory=list,
+        description="图片与实体名称的映射关系，顺序与 images 完全一致",
+    )
+
+
 ShotAssetOverviewSource = Literal["linked", "candidate", "both"]
 
 

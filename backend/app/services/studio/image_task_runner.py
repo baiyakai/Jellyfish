@@ -244,6 +244,7 @@ async def create_image_task_and_link(
     relation_entity_id: str,
     prompt: str,
     images: list[dict[str, str]] | None = None,
+    render_context: dict | None = None,
 ) -> str:
     """创建图片生成任务，并建立任务关联。"""
     store = SqlAlchemyTaskStore(db)
@@ -265,6 +266,8 @@ async def create_image_task_and_link(
     }
     if images:
         run_args["input"]["images"] = images
+    if render_context:
+        run_args["render_context"] = render_context
 
     task_record = await tm.create(
         task=_CreateOnlyTask(),
@@ -335,7 +338,11 @@ async def run_image_generation_task(
                 log_task_event("image_generation", task_id, "cancelled", stage="after_execute")
                 return
 
-            await store.set_result(task_id, result.model_dump())
+            result_payload = result.model_dump()
+            render_context = run_args.get("render_context")
+            if isinstance(render_context, dict):
+                result_payload["render_context"] = render_context
+            await store.set_result(task_id, result_payload)
             await _persist_images_to_assets(
                 session,
                 task_id=task_id,

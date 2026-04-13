@@ -20,7 +20,11 @@ from app.models.task import GenerationTask, GenerationTaskStatus
 from app.models.task_links import GenerationTaskLink
 from app.schemas.studio.shots import ShotVideoReadinessCheck, ShotVideoReadinessRead
 from app.services.common import entity_not_found
-from app.services.studio.shot_video_prompt_pack import render_shot_video_prompt_preview
+from app.services.studio.generation.video import (
+    build_video_base_draft,
+    build_video_context,
+    derive_video_preview,
+)
 
 
 REQUIRED_FRAMES_BY_MODE: dict[str, tuple[ShotFrameType, ...]] = {
@@ -162,7 +166,16 @@ async def get_shot_video_readiness(
         )
 
     try:
-        preview = await render_shot_video_prompt_preview(db, shot_id=shot_id)
+        preview = await derive_video_preview(
+            db,
+            base=build_video_base_draft(shot_id=shot_id, prompt=None),
+            context=await build_video_context(
+                db,
+                shot_id=shot_id,
+                reference_mode="text_only",
+                images=[],
+            ),
+        )
         prompt_ok = bool(preview.rendered_prompt.strip())
         prompt_message = "视频提示词可用" if prompt_ok else "视频提示词为空"
     except Exception as exc:  # noqa: BLE001

@@ -40,7 +40,11 @@ from app.services.studio import (
     set_skip_extraction,
     sync_shot_extracted_candidates_from_draft,
     sync_shot_extracted_dialogue_candidates_from_draft,
-    render_shot_video_prompt_preview,
+)
+from app.services.studio.generation.video import (
+    build_video_base_draft,
+    build_video_context,
+    derive_video_preview,
 )
 from app.services.studio.shots import build_shot_read
 from app.services.studio.shot_details import update as update_shot_detail
@@ -220,7 +224,7 @@ async def test_dialogue_candidate_blocks_ready_until_accepted() -> None:
 
 
 @pytest.mark.asyncio
-async def test_render_shot_video_prompt_preview_uses_prompt_pack() -> None:
+async def test_derive_video_preview_uses_prompt_pack() -> None:
     db, engine = await _build_session()
     async with db:
         shot = await _seed_graph(db)
@@ -254,7 +258,16 @@ async def test_render_shot_video_prompt_preview_uses_prompt_pack() -> None:
         )
         await db.flush()
 
-        result = await render_shot_video_prompt_preview(db, shot_id=shot.id)
+        result = await derive_video_preview(
+            db,
+            base=build_video_base_draft(shot_id=shot.id, prompt=None),
+            context=await build_video_context(
+                db,
+                shot_id=shot.id,
+                reference_mode="text_only",
+                images=[],
+            ),
+        )
 
         assert result.template_id == "video-template-1"
         assert "镜头一" in result.rendered_prompt

@@ -1,5 +1,9 @@
 """Studio 业务服务。"""
 
+# 说明：
+# - 新的生成准备编排主入口已迁移到 `app.services.studio.generation.*`
+# - `shot_video_prompt_pack` 仍保留为视频模板渲染底层组件，不再承担编排入口职责
+
 from app.services.studio.shot_character_links import (
     list_by_shot as list_shot_character_links,
     upsert as upsert_shot_character_link,
@@ -14,17 +18,33 @@ from app.services.studio.files import (
     update_file_meta,
     upload_file,
 )
-from app.services.studio.image_task_prompts import (
-    build_actor_prompt_and_refs,
-    build_asset_prompt_and_refs,
-    build_character_prompt_and_refs,
-    build_shot_frame_prompt_and_refs,
-)
 from app.services.studio.image_task_references import (
     pick_front_ref_file_id,
     pick_ordered_ref_file_ids,
     resolve_reference_file_ids_and_names_from_linked_items,
     resolve_reference_image_refs_by_file_ids,
+)
+from app.services.studio.generation.asset_image import (
+    build_actor_image_base_draft,
+    build_actor_image_submission_payload,
+    build_asset_image_base_draft,
+    build_asset_image_context,
+    build_asset_image_submission_payload,
+    build_character_image_base_draft,
+    build_character_image_submission_payload,
+    derive_asset_image_preview,
+)
+from app.services.studio.generation.frame import (
+    build_frame_base_draft,
+    build_frame_context,
+    build_frame_submission_payload,
+    derive_frame_preview,
+)
+from app.services.studio.generation.video import (
+    build_video_base_draft,
+    build_video_context,
+    build_video_submission_payload,
+    derive_video_preview,
 )
 from app.services.studio.image_task_runner import create_image_task_and_link
 from app.services.studio.image_task_validation import (
@@ -83,10 +103,7 @@ from app.services.studio.shot_extracted_dialogue_candidates import (
     replace_for_shot as replace_shot_extracted_dialogue_candidates,
     sync_from_extraction_draft as sync_shot_extracted_dialogue_candidates_from_draft,
 )
-from app.services.studio.shot_video_prompt_pack import (
-    build_shot_video_prompt_pack,
-    render_shot_video_prompt_preview,
-)
+from app.services.studio.shot_video_prompt_pack import build_shot_video_prompt_pack
 from app.services.studio.shot_runtime_summary import list_shot_runtime_summary_by_chapter
 from app.services.studio.shot_preparation_state import build_shot_preparation_state, link_existing_asset_for_preparation
 from app.services.studio.shot_video_readiness import get_shot_video_readiness
@@ -122,6 +139,19 @@ __all__ = [
     "download_url",
     "entity_spec",
     "build_download_response",
+    "build_actor_image_base_draft",
+    "build_actor_image_submission_payload",
+    "build_asset_image_base_draft",
+    "build_asset_image_context",
+    "build_asset_image_submission_payload",
+    "build_character_image_base_draft",
+    "build_character_image_submission_payload",
+    "build_frame_base_draft",
+    "build_frame_context",
+    "build_frame_submission_payload",
+    "build_video_base_draft",
+    "build_video_context",
+    "build_video_submission_payload",
     "create_project_asset_link",
     "create_image_task_and_link",
     "create_shot",
@@ -130,6 +160,9 @@ __all__ = [
     "delete_entity_image",
     "delete_project_asset_link",
     "delete_shot",
+    "derive_asset_image_preview",
+    "derive_frame_preview",
+    "derive_video_preview",
     "get_file_detail",
     "get_entity",
     "get_storage_info",
@@ -148,7 +181,6 @@ __all__ = [
     "list_shot_extracted_dialogue_candidates",
     "build_shot_preparation_state",
     "link_existing_asset_for_preparation",
-    "build_shot_video_prompt_pack",
     "list_shot_linked_assets_paginated",
     "get_shot_assets_overview",
     "get_shot_video_readiness",
@@ -160,7 +192,6 @@ __all__ = [
     "ignore_shot_extracted_dialogue_candidate",
     "replace_shot_extracted_candidates",
     "replace_shot_extracted_dialogue_candidates",
-    "render_shot_video_prompt_preview",
     "list_shot_runtime_summary_by_chapter",
     "set_skip_extraction",
     "sync_shot_extracted_candidates_from_draft",
@@ -182,10 +213,7 @@ __all__ = [
     "create_shot_frame_image",
     "update_shot_frame_image",
     "delete_shot_frame_image",
-    "build_actor_prompt_and_refs",
-    "build_asset_prompt_and_refs",
-    "build_character_prompt_and_refs",
-    "build_shot_frame_prompt_and_refs",
+    "build_shot_video_prompt_pack",
     "pick_front_ref_file_id",
     "pick_ordered_ref_file_ids",
     "update_shot",

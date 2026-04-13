@@ -89,6 +89,7 @@ import type {
   ShotFrameImageRead,
   ShotCharacterLinkRead,
   ProjectPropLinkRead,
+  ShotFramePromptMappingRead,
   ShotRead,
   ShotVideoReadinessRead,
   ShotRuntimeSummaryRead,
@@ -105,6 +106,7 @@ import { ChapterStudioBatchToolbar } from './components/ChapterStudioBatchToolba
 import { ChapterStudioMaintenancePanel } from './components/ChapterStudioMaintenancePanel'
 import { ChapterStudioReadinessDiagnosisPanel } from './components/ChapterStudioReadinessDiagnosisPanel'
 import { ChapterStudioVideoReadinessPanel } from './components/ChapterStudioVideoReadinessPanel'
+import { useGenerationDraft, type GenerationDraftState } from '../hooks/useGenerationDraft'
 import { useTaskPageContext } from '../components/taskPageContext'
 import type { RelationTaskState } from '../project/ProjectWorkbench/chapterDivisionTasks'
 import { toRelationTaskStateFromStatusRead } from '../project/ProjectWorkbench/chapterDivisionTasks'
@@ -116,6 +118,23 @@ const { TextArea } = Input
 const FRAME_FILE_TAG_ADOPT = '采用'
 const FRAME_FILE_TAG_ABANDON = '废弃'
 
+type ShotFramePromptDebugContext = Record<string, unknown>
+type ShotFramePromptQualityChecks = {
+  passed: boolean
+  issues: string[]
+} | null
+type FramePromptDerived = {
+  basePrompt: string
+  renderedPrompt: string
+  images: string[]
+  mappings: ShotFramePromptMappingRead[]
+}
+type VideoReferenceMode = 'first' | 'last' | 'key' | 'first_last' | 'first_last_key' | 'text_only'
+type VideoPromptDerived = {
+  prompt: string
+  images: string[]
+}
+
 function normalizeFrameExclusiveTags(tags: string[]): string[] {
   const cleaned = (tags || []).map((x) => String(x ?? '').trim()).filter(Boolean)
   const hasAdopt = cleaned.includes(FRAME_FILE_TAG_ADOPT)
@@ -126,6 +145,15 @@ function normalizeFrameExclusiveTags(tags: string[]): string[] {
   // 两者都没有或同时存在：同时存在时默认保留“采用”
   if (hasAdopt && hasAbandon) return [FRAME_FILE_TAG_ADOPT, ...rest]
   return rest
+}
+
+function readDebugContextText(
+  context: ShotFramePromptDebugContext | null,
+  key: string,
+): string {
+  if (!context) return ''
+  const value = context[key]
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 type InspectorMode = 'push' | 'overlay'
@@ -175,6 +203,53 @@ function clamp(n: number, min: number, max: number) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+function mapGenerationDraftStateToRenderState(
+  state: GenerationDraftState,
+): 'idle' | 'stale' | 'syncing' | 'clean' | 'error' {
+  if (state === 'derived' || state === 'submitted') return 'clean'
+  if (state === 'deriving' || state === 'submitting') return 'syncing'
+  if (state === 'draft_changed' || state === 'context_changed') return 'stale'
+  if (state === 'error') return 'error'
+  return 'idle'
+}
+
+function getKeyframeRenderStatusMeta(state: GenerationDraftState) {
+  const renderState = mapGenerationDraftStateToRenderState(state)
+  if (renderState === 'clean') {
+    return {
+      color: 'green' as const,
+      label: '已同步',
+      description: '当前最终提示词已与基础提示词和参考图顺序保持一致。',
+    }
+  }
+  if (renderState === 'syncing') {
+    return {
+      color: 'blue' as const,
+      label: '同步中',
+      description: '正在根据当前基础提示词和参考图顺序更新最终提示词…',
+    }
+  }
+  if (renderState === 'error') {
+    return {
+      color: 'red' as const,
+      label: '同步失败',
+      description: '自动更新失败，请重试。若问题持续存在，请检查基础提示词和参考图。',
+    }
+  }
+  if (renderState === 'idle') {
+    return {
+      color: 'default' as const,
+      label: '待生成',
+      description: '请先输入基础提示词，系统会自动生成最终提示词。',
+    }
+  }
+  return {
+    color: 'gold' as const,
+    label: '待同步',
+    description: '基础提示词或参考图顺序已变化，最终提示词正在等待更新。',
+  }
 }
 
 function applyTaskCancelState(
@@ -2774,14 +2849,58 @@ function Inspector(props: {
   const [keyframePromptPreviewLoading, setKeyframePromptPreviewLoading] = useState(false)
   const [keyframePromptActionLoading, setKeyframePromptActionLoading] = useState(false)
   const [keyframePromptPreviewFrameType, setKeyframePromptPreviewFrameType] = useState<PromptFrameType>('key')
-  const [keyframePromptPreviewDraft, setKeyframePromptPreviewDraft] = useState('')
-  const [keyframePromptPreviewRefFileIds, setKeyframePromptPreviewRefFileIds] = useState<string[]>([])
+  const [keyframePromptDebugContext, setKeyframePromptDebugContext] = useState<ShotFramePromptDebugContext | null>(null)
+  const [keyframePromptDebugCollapsed, setKeyframePromptDebugCollapsed] = useState(true)
+  const [keyframePromptQualityChecks, setKeyframePromptQualityChecks] = useState<ShotFramePromptQualityChecks>(null)
   const [videoPromptPreviewOpen, setVideoPromptPreviewOpen] = useState(false)
   const [videoPromptPreviewLoading, setVideoPromptPreviewLoading] = useState(false)
   const [videoPromptPreviewSubmitting, setVideoPromptPreviewSubmitting] = useState(false)
-  const [videoPromptPreviewDraft, setVideoPromptPreviewDraft] = useState('')
-  const [videoPromptPreviewImages, setVideoPromptPreviewImages] = useState<string[]>([])
-  const [videoReferenceMode, setVideoReferenceMode] = useState<'first' | 'last' | 'key' | 'first_last' | 'first_last_key' | 'text_only'>('text_only')
+  const videoPromptDraft = useGenerationDraft<
+    { prompt: string },
+    { referenceMode: VideoReferenceMode; images: string[] },
+    VideoPromptDerived,
+    { taskId: string | null }
+  >({
+    initialBase: { prompt: '' },
+    initialContext: { referenceMode: 'text_only', images: [] },
+    derive: async ({ base, context }) => {
+      if (!selectedShot?.id) {
+        throw new Error('shot is required')
+      }
+      const res = await FilmService.previewVideoGenerationPromptApiV1FilmTasksVideoPreviewPromptPost({
+        requestBody: {
+          shot_id: selectedShot.id,
+          reference_mode: context.referenceMode,
+          prompt: (base.prompt || '').trim() || null,
+          images: context.images,
+        } as any,
+      })
+      const data = res.data as any
+      return {
+        prompt: typeof data?.prompt === 'string' ? data.prompt : '',
+        images: Array.isArray(data?.images) ? (data.images as string[]).filter(Boolean) : [],
+      }
+    },
+    submit: async ({ derived, context }) => {
+      if (!selectedShot?.id) {
+        throw new Error('shot is required')
+      }
+      const created = await FilmService.createVideoGenerationTaskApiV1FilmTasksVideoPost({
+        requestBody: {
+          shot_id: selectedShot.id,
+          reference_mode: context.referenceMode,
+          prompt: (derived.prompt || '').trim(),
+          images: derived.images,
+        } as any,
+      })
+      return {
+        taskId: created.data?.task_id ?? null,
+      }
+    },
+  })
+  const videoPromptPreviewDraft = videoPromptDraft.base.prompt
+  const videoPromptPreviewImages = videoPromptDraft.context.images
+  const videoReferenceMode = videoPromptDraft.context.referenceMode
   const [videoTaskPolling, setVideoTaskPolling] = useState(false)
   const [videoTaskStatus, setVideoTaskStatus] = useState<string | null>(null)
   const [videoTaskId, setVideoTaskId] = useState<string | null>(null)
@@ -3381,47 +3500,163 @@ function Inspector(props: {
     return map
   }, [extractFileIdFromThumbnail, shotLinkedAssets])
 
+  const deriveKeyframePromptPreview = useCallback(
+    async ({
+      base,
+      context,
+    }: {
+      base: { frameType: PromptFrameType; prompt: string }
+      context: { refFileIds: string[] }
+    }): Promise<FramePromptDerived> => {
+      if (!selectedShot?.id) {
+        throw new Error('shot is required')
+      }
+      const basePrompt = (base.prompt || '').trim()
+      const refFileIds = (context.refFileIds || []).filter(Boolean)
+      if (!basePrompt) {
+        return {
+          basePrompt: '',
+          renderedPrompt: '',
+          images: [],
+          mappings: [],
+        }
+      }
+
+      const imagesPayload = refFileIds
+        .map((fid) => {
+          const match =
+            shotLinkedAssets.find((x) => extractFileIdFromThumbnail(x.thumbnail ?? null) === fid) ??
+            shotLinkedAssets.find((x) => (x as any)?.file_id === fid)
+          return match
+            ? {
+                type: match.type as any,
+                id: match.id,
+                name: match.name ?? match.id,
+                file_id: fid,
+              }
+            : null
+        })
+        .filter(Boolean)
+
+      const rendered = await StudioImageTasksService.renderShotFramePromptApiV1StudioImageTasksShotShotIdFrameRenderPromptPost({
+        shotId: selectedShot.id,
+        requestBody: {
+          frame_type: base.frameType,
+          prompt: basePrompt,
+          images: imagesPayload as any,
+        } as any,
+      })
+      const d = rendered.data as any
+      return {
+        basePrompt: typeof d?.base_prompt === 'string' ? d.base_prompt : basePrompt,
+        renderedPrompt: typeof d?.rendered_prompt === 'string' ? d.rendered_prompt : '',
+        images: Array.isArray(d?.images) ? (d.images as string[]).filter(Boolean) : [],
+        mappings: Array.isArray(d?.mappings) ? (d.mappings as ShotFramePromptMappingRead[]) : [],
+      }
+    },
+    [extractFileIdFromThumbnail, selectedShot?.id, shotLinkedAssets],
+  )
+
+  const keyframePromptDraft = useGenerationDraft<
+    { frameType: PromptFrameType; prompt: string },
+    { refFileIds: string[] },
+    FramePromptDerived,
+    { taskId: string | null }
+  >({
+    initialBase: { frameType: 'key', prompt: '' },
+    initialContext: { refFileIds: [] },
+    derive: deriveKeyframePromptPreview,
+    submit: async ({ base, context, derived }) => {
+      if (!selectedShot?.id) {
+        throw new Error('shot is required')
+      }
+      const resolvedItems =
+        derived.mappings.length > 0
+          ? derived.mappings.map((mapping) => ({
+              type: mapping.type,
+              id: mapping.id,
+              name: mapping.name,
+              file_id: mapping.file_id,
+            }))
+          : (context.refFileIds || []).map((fid) => {
+              const match =
+                shotLinkedAssets.find((x) => extractFileIdFromThumbnail(x.thumbnail ?? null) === fid) ??
+                shotLinkedAssets.find((x) => (x as any)?.file_id === fid)
+              return {
+                type: (match?.type as any) ?? 'character',
+                id: match?.id ?? fid,
+                name: match?.name ?? match?.id ?? fid,
+                file_id: fid,
+              }
+            })
+
+      const created = await StudioImageTasksService.createShotFrameImageGenerationTaskApiV1StudioImageTasksShotShotIdFrameImageTasksPost({
+        shotId: selectedShot.id,
+        requestBody: {
+          frame_type: base.frameType,
+          model_id: null,
+          prompt: (base.prompt || '').trim(),
+          images: resolvedItems as any,
+        } as any,
+      })
+      return {
+        taskId: created.data?.task_id ?? null,
+      }
+    },
+  })
+  const keyframePromptPreviewDraft = keyframePromptDraft.base.prompt
+  const keyframePromptRenderedDraft = keyframePromptDraft.derived?.renderedPrompt ?? ''
+  const keyframePromptRenderMappings = keyframePromptDraft.derived?.mappings ?? []
+  const keyframePromptPreviewRefFileIds = keyframePromptDraft.context.refFileIds
+  const keyframePromptRenderState = keyframePromptDraft.state
   const renderShotPromptToTextarea = useCallback(
-    async (opts?: { frameType?: PromptFrameType; prompt?: string | null }) => {
+    async (opts?: { frameType?: PromptFrameType; prompt?: string; refFileIds?: string[]; showPreviewLoading?: boolean }) => {
       if (!selectedShot?.id) return
       const frameType = opts?.frameType ?? keyframePromptPreviewFrameType
+      const basePrompt = (typeof opts?.prompt === 'string' ? opts.prompt : keyframePromptPreviewDraft || '').trim()
+      const refFileIds = (opts?.refFileIds ?? keyframePromptPreviewRefFileIds ?? []).filter(Boolean)
+      const nextBase = { frameType, prompt: basePrompt }
+      const nextContext = { refFileIds }
+      keyframePromptDraft.hydrate({
+        base: nextBase,
+        context: nextContext,
+        state: basePrompt ? 'draft_changed' : 'idle',
+      })
+      if (!basePrompt) {
+        return
+      }
       setShotRenderPromptLoading(true)
-      setKeyframePromptPreviewLoading(true)
+      if (opts?.showPreviewLoading) {
+        setKeyframePromptPreviewLoading(true)
+      }
       try {
-        const imagesPayload = shotLinkedAssets
-          .map((x) => {
-            const fileId = extractFileIdFromThumbnail(x.thumbnail ?? null)
-            return {
-              type: x.type as any,
-              id: x.id,
-              name: x.name ?? x.id,
-              file_id: fileId,
-            }
+        const derived = await keyframePromptDraft.deriveNow({ base: nextBase, context: nextContext })
+        if (derived?.images?.length) {
+          keyframePromptDraft.hydrate({
+            base: nextBase,
+            context: { refFileIds: derived.images },
+            derived: {
+              ...derived,
+              images: derived.images,
+            },
           })
-          .filter((x) => typeof x.file_id === 'string' && x.file_id.trim().length > 0)
-
-        const rendered = await StudioImageTasksService.renderShotFramePromptApiV1StudioImageTasksShotShotIdFrameRenderPromptPost({
-          shotId: selectedShot.id,
-          requestBody: {
-            frame_type: frameType,
-            model_id: null,
-            prompt: typeof opts?.prompt === 'string' ? opts?.prompt : opts?.prompt === null ? null : undefined,
-            images: imagesPayload as any,
-          } as any,
-        })
-        const d = rendered.data as any
-        const prompt = typeof d?.prompt === 'string' ? d.prompt : ''
-        const serverImages = Array.isArray(d?.images) ? (d.images as string[]).filter(Boolean) : []
-        if (prompt.trim()) setKeyframePromptPreviewDraft(prompt)
-        if (serverImages.length > 0) setKeyframePromptPreviewRefFileIds(serverImages)
+        }
       } catch {
-        // ignore: keep existing draft
+        keyframePromptDraft.setState('error')
       } finally {
-        setKeyframePromptPreviewLoading(false)
+        if (opts?.showPreviewLoading) {
+          setKeyframePromptPreviewLoading(false)
+        }
         setShotRenderPromptLoading(false)
       }
     },
-    [extractFileIdFromThumbnail, keyframePromptPreviewFrameType, selectedShot?.id, shotLinkedAssets],
+    [
+      keyframePromptDraft,
+      keyframePromptPreviewDraft,
+      keyframePromptPreviewFrameType,
+      keyframePromptPreviewRefFileIds,
+      selectedShot?.id,
+    ],
   )
 
   const orderedLinkedCharacterIds = useMemo(() => {
@@ -3461,6 +3696,13 @@ function Inspector(props: {
     linkedAssetThumbByKey,
     orderedLinkedCharacterIds,
   ])
+
+  const moveKeyframePromptRefFile = useCallback((fromIndex: number, toIndex: number) => {
+    const current = keyframePromptPreviewRefFileIds
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= current.length || toIndex >= current.length) return
+    const next = reorder(current, fromIndex, toIndex)
+    keyframePromptDraft.setContext({ refFileIds: next })
+  }, [keyframePromptDraft, keyframePromptPreviewRefFileIds])
 
   const loadProjectRoleOptions = async () => {
     if (!projectId) {
@@ -3744,21 +3986,28 @@ function Inspector(props: {
       return
     }
     const { referenceMode, images } = buildVideoRefSelection()
-    setVideoReferenceMode(referenceMode)
+    const nextContext = { referenceMode, images }
+    videoPromptDraft.hydrate({
+      base: { prompt: '' },
+      context: nextContext,
+    })
     setVideoPromptPreviewOpen(true)
     setVideoPromptPreviewLoading(true)
     try {
-      const res = await FilmService.previewVideoGenerationPromptApiV1FilmTasksVideoPreviewPromptPost({
-        requestBody: {
-          shot_id: selectedShot.id,
-          reference_mode: referenceMode,
-          prompt: null,
-          images,
-        } as any,
+      const derived = await videoPromptDraft.deriveNow({
+        base: { prompt: '' },
+        context: nextContext,
       })
-      const d = res.data as any
-      setVideoPromptPreviewDraft(typeof d?.prompt === 'string' ? d.prompt : '')
-      setVideoPromptPreviewImages(Array.isArray(d?.images) ? (d.images as string[]) : [])
+      if (derived) {
+        videoPromptDraft.hydrate({
+          base: { prompt: derived.prompt },
+          context: {
+            referenceMode,
+            images: derived.images,
+          },
+          derived,
+        })
+      }
     } catch {
       message.error('获取视频提示词预览失败')
     } finally {
@@ -3778,15 +4027,8 @@ function Inspector(props: {
     }
     setVideoPromptPreviewSubmitting(true)
     try {
-      const created = await FilmService.createVideoGenerationTaskApiV1FilmTasksVideoPost({
-        requestBody: {
-          shot_id: selectedShot.id,
-          reference_mode: videoReferenceMode,
-          prompt,
-          images: videoPromptPreviewImages,
-        } as any,
-      })
-      const taskId = created.data?.task_id
+      const submitted = await videoPromptDraft.submitNow()
+      const taskId = submitted?.taskId
       if (!taskId) {
         message.error('视频生成任务创建失败：缺少任务 ID')
         return
@@ -3915,11 +4157,29 @@ function Inspector(props: {
       setKeyframePromptPreviewLoading(true)
       setKeyframePromptPreviewOpen(true)
       setKeyframePromptPreviewFrameType(frameType)
-      setKeyframePromptPreviewRefFileIds(autoKeyframeRefFileIds)
+      setKeyframePromptDebugCollapsed(true)
+      const basePrompt = getPromptFromDetailByType(frameType)
+      keyframePromptDraft.hydrate({
+        base: { frameType, prompt: basePrompt },
+        context: { refFileIds: autoKeyframeRefFileIds },
+        state: basePrompt.trim() ? 'draft_changed' : 'idle',
+      })
+      setKeyframePromptDebugContext(null)
+      setKeyframePromptQualityChecks(null)
       // 文本区域内容：统一由 frame-render-prompt 获取
-      void renderShotPromptToTextarea({ frameType, prompt: getPromptFromDetailByType(frameType) })
+      if (basePrompt.trim()) {
+        void renderShotPromptToTextarea({
+          frameType,
+          prompt: basePrompt,
+          refFileIds: autoKeyframeRefFileIds,
+          showPreviewLoading: true,
+        })
+      } else {
+        setKeyframePromptPreviewLoading(false)
+      }
     } catch {
       message.error('获取提示词失败')
+      setKeyframePromptPreviewLoading(false)
     } finally {
       // loading 由 renderShotPromptToTextarea 结束后关闭
     }
@@ -3932,7 +4192,6 @@ function Inspector(props: {
     }
     const frameType = keyframePromptPreviewFrameType
     setKeyframePromptActionLoading(true)
-    setKeyframePromptPreviewLoading(true)
     try {
       const created = await FilmService.createShotFramePromptTaskApiV1FilmTasksShotFramePromptsPost({
         requestBody: {
@@ -3987,12 +4246,44 @@ function Inspector(props: {
       const resultRes = await FilmService.getTaskResultApiV1FilmTasksTaskIdResultGet({ taskId })
       const result = (resultRes.data?.result ?? null) as Record<string, unknown> | null
       const generatedPrompt = typeof result?.prompt === 'string' ? result.prompt : ''
+      const debugContext =
+        result && typeof result.debug_context === 'object' && result.debug_context !== null
+          ? (result.debug_context as ShotFramePromptDebugContext)
+          : null
+      const qualityChecks =
+        result &&
+        typeof result.quality_checks === 'object' &&
+        result.quality_checks !== null &&
+        typeof (result.quality_checks as Record<string, unknown>).passed === 'boolean'
+          ? {
+              passed: Boolean((result.quality_checks as Record<string, unknown>).passed),
+              issues: Array.isArray((result.quality_checks as Record<string, unknown>).issues)
+                ? ((result.quality_checks as Record<string, unknown>).issues as unknown[])
+                    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+                    .filter(Boolean)
+                : [],
+            }
+          : null
       if (!generatedPrompt.trim()) {
         message.warning('生成完成，但未返回提示词')
         return
       }
-      // 文本区域内容：改为以 frame-render-prompt 的返回为准
-      await renderShotPromptToTextarea({ frameType, prompt: generatedPrompt })
+      if (frameType === 'first') {
+        onPatchShotDetail({ first_frame_prompt: generatedPrompt })
+      } else if (frameType === 'last') {
+        onPatchShotDetail({ last_frame_prompt: generatedPrompt })
+      } else {
+        onPatchShotDetail({ key_frame_prompt: generatedPrompt })
+      }
+      setKeyframePromptDebugContext(debugContext)
+      setKeyframePromptQualityChecks(qualityChecks)
+      keyframePromptDraft.replaceBase({ frameType, prompt: generatedPrompt })
+      keyframePromptDraft.setState('draft_changed')
+      await renderShotPromptToTextarea({
+        frameType,
+        prompt: generatedPrompt,
+        refFileIds: keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds,
+      })
       message.success('提示词已生成')
     } catch {
       message.error('生成提示词失败')
@@ -4006,8 +4297,35 @@ function Inspector(props: {
     if (!keyframePromptPreviewOpen) return
     if (keyframePromptPreviewRefFileIds.length > 0) return
     if (autoKeyframeRefFileIds.length === 0) return
-    setKeyframePromptPreviewRefFileIds(autoKeyframeRefFileIds)
+    keyframePromptDraft.setContext({ refFileIds: autoKeyframeRefFileIds })
   }, [autoKeyframeRefFileIds, keyframePromptPreviewOpen, keyframePromptPreviewRefFileIds.length])
+
+  useEffect(() => {
+    if (!keyframePromptPreviewOpen) return
+    if (mapGenerationDraftStateToRenderState(keyframePromptRenderState) !== 'stale') return
+    const basePrompt = (keyframePromptPreviewDraft || '').trim()
+    if (!basePrompt) return
+    const refFileIds =
+      keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds
+    const timer = window.setTimeout(() => {
+      void renderShotPromptToTextarea({
+        frameType: keyframePromptPreviewFrameType,
+        prompt: basePrompt,
+        refFileIds,
+      })
+    }, 400)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [
+    autoKeyframeRefFileIds,
+    keyframePromptPreviewDraft,
+    keyframePromptPreviewFrameType,
+    keyframePromptPreviewOpen,
+    keyframePromptPreviewRefFileIds,
+    keyframePromptRenderState,
+    renderShotPromptToTextarea,
+  ])
 
   const confirmGenerateKeyframeWithPrompt = async () => {
     if (!selectedShot?.id) {
@@ -4015,8 +4333,8 @@ function Inspector(props: {
       return
     }
     const frameType = keyframePromptPreviewFrameType
-    const prompt = (keyframePromptPreviewDraft || '').trim()
-    if (!prompt) {
+    const basePrompt = (keyframePromptPreviewDraft || '').trim()
+    if (!basePrompt) {
       message.warning('请输入提示词')
       return
     }
@@ -4024,30 +4342,10 @@ function Inspector(props: {
     setKeyframePromptActionLoading(true)
     updateCardState(frameType, { loading: true, taskStatus: 'pending', taskId: null })
     try {
-      // 若当前预览未携带参考图（例如直接打开未生成过），自动补齐为当前分镜关联实体的参考图
       const refFileIds = keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds
-      const imagesPayload = refFileIds.map((fid) => {
-        const match =
-          shotLinkedAssets.find((x) => extractFileIdFromThumbnail(x.thumbnail ?? null) === fid) ??
-          shotLinkedAssets.find((x) => (x as any)?.file_id === fid)
-        // 后端 ShotLinkedAssetItem: type/id/name 必填；file_id 用于参考图
-        return {
-          type: (match?.type as any) ?? 'character',
-          id: match?.id ?? fid,
-          name: match?.name ?? match?.id ?? fid,
-          file_id: fid,
-        }
-      })
-      const created = await StudioImageTasksService.createShotFrameImageGenerationTaskApiV1StudioImageTasksShotShotIdFrameImageTasksPost({
-        shotId: selectedShot.id,
-        requestBody: {
-          frame_type: frameType,
-          model_id: null,
-          prompt,
-          images: imagesPayload,
-        } as any,
-      })
-      const taskId = created.data?.task_id
+      keyframePromptDraft.replaceContext({ refFileIds })
+      const submitted = await keyframePromptDraft.submitNow()
+      const taskId = submitted?.taskId
       if (!taskId) {
         message.error('生成任务创建失败：缺少任务 ID')
         updateCardState(frameType, { loading: false, taskStatus: 'failed' })
@@ -4985,12 +5283,7 @@ function Inspector(props: {
           }}
           footer={(
             <div className="flex items-center justify-between">
-              <Button
-                loading={keyframePromptActionLoading}
-                onClick={() => void regenerateKeyframePrompt()}
-              >
-                {getPromptFromDetailByType(keyframePromptPreviewFrameType).trim() ? '重新生成提示词' : '生成提示词'}
-              </Button>
+              <div />
               <Space>
                 <Button
                   loading={keyframePromptActionLoading}
@@ -5010,45 +5303,320 @@ function Inspector(props: {
           destroyOnClose
           width={900}
         >
-          {keyframePromptPreviewLoading ? (
-            <div className="py-8 text-center">
-              <Spin />
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div>
-                <div className="text-xs text-gray-500 mb-2">关联图片（参考图）</div>
-                {keyframePromptPreviewRefFileIds.length === 0 ? (
-                  <div className="text-xs text-gray-400">暂无关联图片</div>
-                ) : (
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    <Image.PreviewGroup>
-                      {keyframePromptPreviewRefFileIds.map((fid) => (
-                        <Tooltip key={fid} title={shotLinkedAssetNameByFileId.get(fid) ?? fid}>
-                          <Image
-                            width={72}
-                            height={72}
-                            style={{ objectFit: 'cover', borderRadius: 8 }}
-                            src={buildFileDownloadUrl(fid)}
-                          />
-                        </Tooltip>
-                      ))}
-                    </Image.PreviewGroup>
+          {(() => {
+            const hasBasePrompt = keyframePromptPreviewDraft.trim().length > 0
+            const renderStatusMeta = getKeyframeRenderStatusMeta(keyframePromptRenderState)
+            const debugVisualStyle = readDebugContextText(keyframePromptDebugContext, 'visual_style')
+            const debugStyle = readDebugContextText(keyframePromptDebugContext, 'style')
+            const debugCharacterContext = readDebugContextText(keyframePromptDebugContext, 'character_context')
+            const debugSceneContext = readDebugContextText(keyframePromptDebugContext, 'scene_context')
+            const debugPropContext = readDebugContextText(keyframePromptDebugContext, 'prop_context')
+            const debugCostumeContext = readDebugContextText(keyframePromptDebugContext, 'costume_context')
+            const debugShotDescription = readDebugContextText(keyframePromptDebugContext, 'shot_description')
+            const debugDialogSummary = readDebugContextText(keyframePromptDebugContext, 'dialog_summary')
+            const debugUnifyStyle =
+              typeof keyframePromptDebugContext?.unify_style === 'boolean'
+                ? (keyframePromptDebugContext.unify_style ? '是' : '否')
+                : readDebugContextText(keyframePromptDebugContext, 'unify_style')
+            const hasPromptDebugContext = Boolean(
+              debugVisualStyle ||
+                debugStyle ||
+                debugCharacterContext ||
+                debugSceneContext ||
+                debugPropContext ||
+                debugCostumeContext ||
+                debugShotDescription ||
+                debugDialogSummary ||
+                debugUnifyStyle,
+            )
+            const hasPromptQualityChecks = keyframePromptQualityChecks !== null
+            return keyframePromptPreviewLoading ? (
+              <div className="py-8 text-center">
+                <Spin />
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium text-slate-900">参考图映射</div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        图片顺序会直接决定最终提示词中的图1、图2映射关系，并影响模型生成结果。
+                      </div>
+                    </div>
+                    <Tag color="gold">顺序影响图1/图2</Tag>
                   </div>
-                )}
+                  {keyframePromptPreviewRefFileIds.length === 0 ? (
+                    <div className="text-xs text-gray-400">暂无关联图片</div>
+                  ) : (
+                    <div className="flex gap-3 overflow-x-auto pb-1">
+                      <Image.PreviewGroup>
+                        {keyframePromptPreviewRefFileIds.map((fid, index) => (
+                          <div key={fid} className="w-[92px] shrink-0">
+                            <Tooltip title={shotLinkedAssetNameByFileId.get(fid) ?? fid}>
+                              <Image
+                                width={72}
+                                height={72}
+                                style={{ objectFit: 'cover', borderRadius: 8, border: '1px solid #e2e8f0' }}
+                                src={buildFileDownloadUrl(fid)}
+                              />
+                            </Tooltip>
+                            <div className="mt-1">
+                              <Tag color="blue">{`图${index + 1}`}</Tag>
+                            </div>
+                            <div className="truncate text-[11px] text-gray-700">
+                              {shotLinkedAssetNameByFileId.get(fid) ?? fid}
+                            </div>
+                            <div className="mt-1 flex gap-1">
+                              <Button
+                                size="small"
+                                disabled={index === 0 || keyframePromptActionLoading || shotRenderPromptLoading}
+                                onClick={() => moveKeyframePromptRefFile(index, index - 1)}
+                              >
+                                左移
+                              </Button>
+                              <Button
+                                size="small"
+                                disabled={
+                                  index === keyframePromptPreviewRefFileIds.length - 1 ||
+                                  keyframePromptActionLoading ||
+                                  shotRenderPromptLoading
+                                }
+                                onClick={() => moveKeyframePromptRefFile(index, index + 1)}
+                              >
+                                右移
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </Image.PreviewGroup>
+                    </div>
+                  )}
+                </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-slate-900">基础提示词</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      描述画面内容本身，不包含图片映射说明。
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      AI生成会继承当前项目风格，并优先参考已确认的角色、场景、道具和服装设定。
+                    </div>
+                  </div>
+                  <Space size="small">
+                    <Tag color={hasBasePrompt ? 'blue' : 'default'}>{hasBasePrompt ? '可编辑' : '未生成'}</Tag>
+                    <Button
+                      size="small"
+                      type={hasBasePrompt ? 'default' : 'primary'}
+                      loading={keyframePromptActionLoading}
+                      onClick={() => void regenerateKeyframePrompt()}
+                    >
+                      AI生成
+                    </Button>
+                  </Space>
+                </div>
+                {!hasBasePrompt ? (
+                  <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                    当前还没有基础提示词。你可以先让 AI 生成一版，再按需修改；也可以直接手动输入。
+                  </div>
+                  ) : null}
+                  {hasPromptQualityChecks ? (
+                    <div
+                      className={`mb-3 rounded-lg border px-3 py-2 text-xs ${
+                        keyframePromptQualityChecks?.passed
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : 'border-amber-200 bg-amber-50 text-amber-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Tag color={keyframePromptQualityChecks?.passed ? 'green' : 'gold'}>
+                          {keyframePromptQualityChecks?.passed ? '质量校验通过' : '已触发自动修正'}
+                        </Tag>
+                        <span>
+                          {keyframePromptQualityChecks?.passed
+                            ? '本次 AI 生成已通过基础质量校验。'
+                            : '本次 AI 生成触发过自动修正，系统已尽量清理不符合基础提示词要求的内容。'}
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+                  <Input.TextArea
+                    rows={6}
+                    value={keyframePromptPreviewDraft}
+                    onChange={(e) => {
+                      keyframePromptDraft.setBase((prev) => ({ ...prev, prompt: e.target.value }))
+                      if (!e.target.value.trim()) {
+                        keyframePromptDraft.resetDerived()
+                      }
+                    }}
+                    placeholder="请输入基础提示词，例如人物动作、场景氛围、镜头视角等…"
+                    disabled={keyframePromptActionLoading || shotRenderPromptLoading}
+                  />
+                  {hasPromptDebugContext ? (
+                    <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="font-medium text-slate-700">最近一次 AI 生成上下文</div>
+                        <Space size="small">
+                          <Tag color="default">调试信息</Tag>
+                          <Button
+                            size="small"
+                            type="text"
+                            onClick={() => setKeyframePromptDebugCollapsed((prev) => !prev)}
+                          >
+                            {keyframePromptDebugCollapsed ? '展开' : '收起'}
+                          </Button>
+                        </Space>
+                      </div>
+                      {keyframePromptDebugCollapsed ? (
+                        <div className="mt-2 text-slate-500">
+                          调试信息默认收起，展开后可查看最近一次 AI 生成使用的项目风格、镜头描述与实体上下文。
+                        </div>
+                      ) : (
+                        <div className="mt-2 grid gap-2 md:grid-cols-2">
+                          <div>
+                            <div className="text-slate-500">项目风格</div>
+                            <div className="mt-1 text-slate-700">
+                              {[debugVisualStyle, debugStyle].filter(Boolean).join(' / ') || '无'}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-slate-500">统一风格</div>
+                            <div className="mt-1 text-slate-700">{debugUnifyStyle || '无'}</div>
+                          </div>
+                          {debugShotDescription ? (
+                            <div className="md:col-span-2">
+                              <div className="text-slate-500">镜头补充描述</div>
+                              <div className="mt-1 whitespace-pre-wrap text-slate-700">{debugShotDescription}</div>
+                            </div>
+                          ) : null}
+                          {debugDialogSummary ? (
+                            <div className="md:col-span-2">
+                              <div className="text-slate-500">对白摘要</div>
+                              <div className="mt-1 whitespace-pre-wrap text-slate-700">{debugDialogSummary}</div>
+                            </div>
+                          ) : null}
+                          {debugCharacterContext ? (
+                            <div className="md:col-span-2">
+                              <div className="text-slate-500">角色上下文</div>
+                              <div className="mt-1 whitespace-pre-wrap text-slate-700">{debugCharacterContext}</div>
+                            </div>
+                          ) : null}
+                          {debugSceneContext ? (
+                            <div className="md:col-span-2">
+                              <div className="text-slate-500">场景上下文</div>
+                              <div className="mt-1 whitespace-pre-wrap text-slate-700">{debugSceneContext}</div>
+                            </div>
+                          ) : null}
+                          {debugPropContext ? (
+                            <div className="md:col-span-2">
+                              <div className="text-slate-500">道具上下文</div>
+                              <div className="mt-1 whitespace-pre-wrap text-slate-700">{debugPropContext}</div>
+                            </div>
+                          ) : null}
+                          {debugCostumeContext ? (
+                            <div className="md:col-span-2">
+                              <div className="text-slate-500">服装上下文</div>
+                              <div className="mt-1 whitespace-pre-wrap text-slate-700">{debugCostumeContext}</div>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium text-slate-900">最终生成提示词</div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        系统会根据当前基础提示词和参考图顺序自动生成这一版内容，提交给模型时将使用这里的结果。
+                      </div>
+                    </div>
+                    <Space size="small">
+                      <Tag color="geekblue">系统生成</Tag>
+                      <Tag>只读</Tag>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          void renderShotPromptToTextarea({
+                            frameType: keyframePromptPreviewFrameType,
+                            prompt: keyframePromptPreviewDraft,
+                            refFileIds:
+                              keyframePromptPreviewRefFileIds.length > 0
+                                ? keyframePromptPreviewRefFileIds
+                                : autoKeyframeRefFileIds,
+                          })
+                        }
+                        disabled={!hasBasePrompt}
+                        loading={shotRenderPromptLoading}
+                      >
+                        重新同步
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(keyframePromptRenderedDraft || '')
+                            message.success('最终提示词已复制')
+                          } catch {
+                            message.error('复制失败')
+                          }
+                        }}
+                        disabled={!keyframePromptRenderedDraft.trim()}
+                      >
+                        复制
+                      </Button>
+                    </Space>
+                  </div>
+                  <div
+                    className={`mb-3 rounded-lg border px-3 py-2 text-sm ${
+                      renderStatusMeta.color === 'green'
+                        ? 'border-green-200 bg-green-50 text-green-700'
+                        : renderStatusMeta.color === 'blue'
+                          ? 'border-blue-200 bg-blue-50 text-blue-700'
+                          : renderStatusMeta.color === 'red'
+                            ? 'border-red-200 bg-red-50 text-red-700'
+                            : renderStatusMeta.color === 'gold'
+                              ? 'border-amber-200 bg-amber-50 text-amber-700'
+                              : 'border-slate-200 bg-white text-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Tag color={renderStatusMeta.color}>{renderStatusMeta.label}</Tag>
+                      <span>{renderStatusMeta.description}</span>
+                    </div>
+                  </div>
+                  {keyframePromptRenderMappings.length > 0 ? (
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      {keyframePromptRenderMappings.map((mapping) => (
+                        <Tag key={`${mapping.token}:${mapping.file_id}`}>{`${mapping.token} = ${mapping.name}`}</Tag>
+                      ))}
+                    </div>
+                  ) : null}
+                  {hasBasePrompt ? (
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm leading-6 text-slate-800 whitespace-pre-wrap min-h-[220px]">
+                      {keyframePromptRenderedDraft || '系统正在根据当前内容准备最终提示词…'}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-6 text-sm text-slate-500">
+                      <div className="font-medium text-slate-700">等待基础提示词</div>
+                      <div className="mt-2">
+                        基础提示词准备完成后，系统会自动：
+                      </div>
+                      <div className="mt-2 space-y-1 text-slate-500">
+                        <div>1. 根据当前参考图顺序生成图1 / 图2映射</div>
+                        <div>2. 补充“## 图片内容说明”</div>
+                        <div>3. 生成最终提交给模型的提示词</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div>
-                <div className="text-xs text-gray-500 mb-2">提示词（可编辑）</div>
-                <Input.TextArea
-                  rows={10}
-                  value={keyframePromptPreviewDraft}
-                  onChange={(e) => setKeyframePromptPreviewDraft(e.target.value)}
-                  placeholder="请输入提示词…"
-                  disabled={keyframePromptActionLoading || shotRenderPromptLoading}
-                />
-              </div>
-            </div>
-          )}
+            )
+          })()}
         </Modal>
 
         <Modal
@@ -5096,7 +5664,7 @@ function Inspector(props: {
                 <Input.TextArea
                   rows={10}
                   value={videoPromptPreviewDraft}
-                  onChange={(e) => setVideoPromptPreviewDraft(e.target.value)}
+                  onChange={(e) => videoPromptDraft.setBase({ prompt: e.target.value })}
                   placeholder="请输入视频提示词…"
                   disabled={videoPromptPreviewSubmitting}
                 />

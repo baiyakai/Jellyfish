@@ -13,16 +13,11 @@ export type ShotFramePromptRenderRequest = {
      */
     frame_type: ShotFrameType;
     /**
-     * 保留字段，当前渲染接口不使用；用于与前端调用参数保持一致。
+     * 原始基础提示词。渲染接口要求显式传入，用于生成最终提示词。
      */
-    model_id?: (string | null);
-    /**
-     * 可选提示词。为空时由后端基于分镜数据自动生成；非空时将参考图说明拼接后直接返回。
-     */
-    prompt?: (string | null);
+    prompt: string;
     /**
      * 参考资产条目列表（可多张，顺序有效）。后端会使用 item.file_id 作为参考图；无效条目会被跳过。
      */
-    images?: Array<ShotLinkedAssetItem>;
+    images: Array<ShotLinkedAssetItem>;
 };
-

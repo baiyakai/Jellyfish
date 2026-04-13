@@ -257,6 +257,14 @@ export function ChapterShotEditPage() {
     }),
     [shotsSorted],
   )
+  const shotListFilterOptions = useMemo<Array<{ label: string; value: ShotListFilter }>>(
+    () => [
+      { label: `全部 ${shotListFilterCounts.all}`, value: 'all' },
+      { label: `未提取 ${shotListFilterCounts.not_extracted}`, value: 'not_extracted' },
+      { label: `待确认 ${shotListFilterCounts.pending}`, value: 'pending' },
+    ],
+    [shotListFilterCounts.all, shotListFilterCounts.not_extracted, shotListFilterCounts.pending],
+  )
   const filteredShots = useMemo(() => {
     if (shotListFilter === 'all') return shotsSorted
     if (shotListFilter === 'not_extracted') {
@@ -1519,16 +1527,12 @@ export function ChapterShotEditPage() {
                 bodyStyle={{ padding: 8, flex: 1, minHeight: 0, overflow: 'auto' }}
               >
                 <div className="mb-3">
-                  <Segmented<ShotListFilter>
+                  <Segmented
                     block
                     size="small"
                     value={shotListFilter}
-                    onChange={(value) => setShotListFilter(value)}
-                    options={[
-                      { label: `全部 ${shotListFilterCounts.all}`, value: 'all' },
-                      { label: `未提取 ${shotListFilterCounts.not_extracted}`, value: 'not_extracted' },
-                      { label: `待确认 ${shotListFilterCounts.pending}`, value: 'pending' },
-                    ]}
+                    onChange={(value) => setShotListFilter(value as ShotListFilter)}
+                    options={shotListFilterOptions}
                   />
                   <div className="mt-2">
                     <Button

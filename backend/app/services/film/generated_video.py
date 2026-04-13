@@ -19,39 +19,21 @@ from app.core.tasks import (
 )
 from app.models.llm import Model, ModelCategoryKey, ModelSettings, Provider
 from app.models.task_links import GenerationTaskLink
-from app.models.studio import FileItem, Shot, ShotDetail, ShotFrameImage, ShotFrameType
+from app.models.studio import FileItem, Shot, ShotDetail, ShotFrameType
 from app.models.types import FileUsageKind
 from app.services.common import entity_not_found
 from app.services.studio.file_usages import sync_usage_from_shot_context
+from app.services.studio.generation.video import (
+    REQUIRED_FRAMES_BY_MODE,
+    build_video_base_draft,
+    build_video_context,
+    build_video_submission_payload,
+    validate_images_count,
+)
 from app.services.studio.shot_status import recompute_shot_status
-from app.services.studio.shot_video_prompt_pack import render_shot_video_prompt_preview
 from app.services.worker.async_task_support import cancel_if_requested_async
 from app.services.worker.task_logging import log_task_event, log_task_failure
 from app.utils.files import create_file_from_url_or_b64
-
-REQUIRED_FRAMES_BY_MODE: dict[str, tuple[ShotFrameType, ...]] = {
-    "first": (ShotFrameType.first,),
-    "last": (ShotFrameType.last,),
-    "key": (ShotFrameType.key,),
-    "first_last": (ShotFrameType.first, ShotFrameType.last),
-    "first_last_key": (ShotFrameType.first, ShotFrameType.last, ShotFrameType.key),
-    "text_only": (),
-}
-
-
-def required_image_count(reference_mode: str) -> int:
-    return len(REQUIRED_FRAMES_BY_MODE[reference_mode])
-
-
-def validate_images_count(reference_mode: str, images: list[str]) -> None:
-    expected = required_image_count(reference_mode)
-    actual = len(images or [])
-    if actual != expected:
-        raise HTTPException(
-            status_code=400,
-            detail=f"reference_mode={reference_mode} requires exactly {expected} images, got {actual}",
-        )
-
 
 async def validate_shot_and_duration(db: AsyncSession, shot_id: str) -> ShotDetail:
     shot = await db.get(Shot, shot_id)
@@ -99,58 +81,20 @@ async def preview_prompt_and_images(
     shot_id: str,
     reference_mode: str,
     prompt: str | None,
+    images: list[str] | None = None,
 ) -> tuple[str, list[str], ShotDetail]:
     shot_detail = await validate_shot_and_duration(db, shot_id)
-    required_frames = REQUIRED_FRAMES_BY_MODE[reference_mode]
-
-    frame_map: dict[ShotFrameType, ShotFrameImage] = {}
-    if required_frames:
-        stmt = select(ShotFrameImage).where(
-            ShotFrameImage.shot_detail_id == shot_id,
-            ShotFrameImage.frame_type.in_(required_frames),
-        )
-        rows = (await db.execute(stmt)).scalars().all()
-        frame_map = {r.frame_type: r for r in rows}
-
-        missing: list[ShotFrameType] = []
-        for ft in required_frames:
-            row = frame_map.get(ft)
-            if row is None or not row.file_id:
-                missing.append(ft)
-        if missing:
-            missing_name = ",".join(m.value for m in missing)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Required frame image is missing: {missing_name}; please generate it first",
-            )
-
-    prompt_by_mode = {
-        "first": (shot_detail.first_frame_prompt or "").strip(),
-        "last": (shot_detail.last_frame_prompt or "").strip(),
-        "key": (shot_detail.key_frame_prompt or "").strip(),
-        "first_last": "\n".join(
-            p for p in [(shot_detail.first_frame_prompt or "").strip(), (shot_detail.last_frame_prompt or "").strip()] if p
-        ),
-        "first_last_key": "\n".join(
-            p
-            for p in [
-                (shot_detail.first_frame_prompt or "").strip(),
-                (shot_detail.last_frame_prompt or "").strip(),
-                (shot_detail.key_frame_prompt or "").strip(),
-            ]
-            if p
-        ),
-        "text_only": "",
-    }
-    final_prompt = (prompt or "").strip()
-    if not final_prompt:
-        preview = await render_shot_video_prompt_preview(db, shot_id=shot_id)
-        final_prompt = preview.rendered_prompt.strip() or prompt_by_mode[reference_mode]
-    if not final_prompt:
+    base = build_video_base_draft(shot_id=shot_id, prompt=prompt)
+    context = await build_video_context(
+        db,
+        shot_id=shot_id,
+        reference_mode=reference_mode,
+        images=images,
+    )
+    submission = await build_video_submission_payload(db, base=base, context=context)
+    if not submission.prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
-
-    image_ids = [str(frame_map[ft].file_id) for ft in required_frames if frame_map.get(ft) and frame_map[ft].file_id]
-    return final_prompt, image_ids, shot_detail
+    return submission.prompt, submission.images, shot_detail
 
 
 def provider_key_from_db_name(name: str) -> str:
@@ -215,19 +159,22 @@ async def build_run_args(
     model = await resolve_default_video_model(db)
     provider_cfg = await load_provider_config_by_model(db, model)
     shot_detail = await validate_shot_and_duration(db, shot_id)
-    validate_images_count(reference_mode, images)
+    base = build_video_base_draft(shot_id=shot_id, prompt=prompt, size=size)
+    context = await build_video_context(
+        db,
+        shot_id=shot_id,
+        reference_mode=reference_mode,
+        images=images,
+    )
+    submission = await build_video_submission_payload(db, base=base, context=context)
+    validate_images_count(reference_mode, submission.images)
 
-    final_prompt = (prompt or "").strip()
-    prompt_preview_payload: dict | None = None
-    if not final_prompt:
-        preview = await render_shot_video_prompt_preview(db, shot_id=shot_id)
-        final_prompt = preview.rendered_prompt.strip()
-        prompt_preview_payload = preview.model_dump()
+    final_prompt = submission.prompt.strip()
     if not final_prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
 
-    required_frames = REQUIRED_FRAMES_BY_MODE[reference_mode]
-    frame_data_urls = [await file_id_to_data_url(db, file_id=file_id) for file_id in images]
+    required_frames = tuple(ShotFrameType(item) for item in REQUIRED_FRAMES_BY_MODE[reference_mode])
+    frame_data_urls = [await file_id_to_data_url(db, file_id=file_id) for file_id in submission.images]
     frame_map = {ft: frame_data_urls[i] for i, ft in enumerate(required_frames)}
 
     run_args = {
@@ -245,7 +192,8 @@ async def build_run_args(
             "seconds": shot_detail.duration,
         },
     }
-    if prompt_preview_payload is not None:
+    prompt_preview_payload = submission.extra.get("prompt_preview")
+    if isinstance(prompt_preview_payload, dict):
         run_args["prompt_preview"] = prompt_preview_payload
     return run_args
 

@@ -127,6 +127,25 @@ async def test_preview_prompt_and_images_uses_auto_frame_ids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_preview_prompt_and_images_prefers_request_images_when_provided() -> None:
+    db, engine = await _build_session()
+    async with db:
+        await _seed_shot_graph(db)
+        prompt, images, detail = await preview_prompt_and_images(
+            db,
+            shot_id="s1",
+            reference_mode="first_last",
+            prompt="自定义视频提示词",
+            images=["manual-first", "manual-last"],
+        )
+
+        assert prompt == "自定义视频提示词"
+        assert images == ["manual-first", "manual-last"]
+        assert detail.duration == 6
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_build_run_args_maps_reference_images(monkeypatch: pytest.MonkeyPatch) -> None:
     db, engine = await _build_session()
     async with db:

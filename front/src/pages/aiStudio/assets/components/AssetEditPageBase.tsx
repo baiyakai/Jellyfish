@@ -29,6 +29,7 @@ import { useRelationTaskNotification } from '../../components/taskNotificationHe
 import { useTaskPageContext } from '../../components/taskPageContext'
 import { TASK_COPY } from '../../components/taskCopy'
 import { useLocation } from 'react-router-dom'
+import { useGenerationDraft } from '../../hooks/useGenerationDraft'
 import {
   CHARACTER_PORTRAIT_ANALYSIS_RELATION_TYPE,
   COSTUME_INFO_ANALYSIS_RELATION_TYPE,
@@ -195,8 +196,37 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false)
   const [promptPreviewLoading, setPromptPreviewLoading] = useState(false)
   const [promptPreviewImage, setPromptPreviewImage] = useState<TImage | null>(null)
-  const [promptPreviewDraft, setPromptPreviewDraft] = useState('')
-  const [promptPreviewRefFileIds, setPromptPreviewRefFileIds] = useState<string[]>([])
+  const promptDraft = useGenerationDraft<
+    { prompt: string },
+    { imageId: number | null; images: string[] },
+    { prompt: string; images: string[] },
+    { taskId: string | null }
+  >({
+    initialBase: { prompt: '' },
+    initialContext: { imageId: null, images: [] },
+    derive: async ({ base, context }) => {
+      if (!assetId || !context.imageId) {
+        throw new Error('asset image slot is required')
+      }
+      const result = await renderPrompt(assetId, context.imageId)
+      return {
+        prompt: (base.prompt || '').trim() || (result.prompt ?? ''),
+        images: Array.isArray(result.images) ? result.images.filter(Boolean) : [],
+      }
+    },
+    submit: async ({ context, derived }) => {
+      if (!assetId || !context.imageId) {
+        throw new Error('asset image slot is required')
+      }
+      const taskId = await createGenerationTask(assetId, context.imageId, {
+        prompt: (derived.prompt || '').trim(),
+        images: derived.images,
+      })
+      return { taskId }
+    },
+  })
+  const promptPreviewDraft = promptDraft.base.prompt
+  const promptPreviewRefFileIds = promptDraft.context.images
 
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -533,9 +563,22 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
       setPromptPreviewOpen(true)
       setPromptPreviewLoading(true)
       setPromptPreviewImage(image)
-      const res = await renderPrompt(assetId, image.id)
-      setPromptPreviewDraft(res.prompt ?? '')
-      setPromptPreviewRefFileIds(Array.isArray(res.images) ? res.images.filter(Boolean) : [])
+      const nextContext = { imageId: image.id, images: [] }
+      promptDraft.hydrate({
+        base: { prompt: '' },
+        context: nextContext,
+      })
+      const derived = await promptDraft.deriveNow({
+        base: { prompt: '' },
+        context: nextContext,
+      })
+      if (derived) {
+        promptDraft.hydrate({
+          base: { prompt: derived.prompt },
+          context: { imageId: image.id, images: derived.images },
+          derived,
+        })
+      }
     } catch {
       message.error('获取提示词失败')
     } finally {
@@ -553,10 +596,8 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
 
     setGeneratingByImageId((prev) => ({ ...prev, [promptPreviewImage.id]: true }))
     try {
-      const taskId = await createGenerationTask(assetId, promptPreviewImage.id, {
-        prompt,
-        images: promptPreviewRefFileIds,
-      })
+      const submitted = await promptDraft.submitNow()
+      const taskId = submitted?.taskId
       if (!taskId) {
         message.error('生成任务创建失败：缺少任务 ID')
         return
@@ -938,7 +979,7 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
               <Input.TextArea
                 rows={10}
                 value={promptPreviewDraft}
-                onChange={(e) => setPromptPreviewDraft(e.target.value)}
+                onChange={(e) => promptDraft.setBase({ prompt: e.target.value })}
                 placeholder="请输入提示词…"
               />
             </div>

@@ -53,9 +53,14 @@ from app.services.studio import (
     list_shot_extracted_dialogue_candidates,
     get_shot_video_readiness,
     list_shot_runtime_summary_by_chapter,
-    render_shot_video_prompt_preview,
     set_skip_extraction,
 )
+from app.services.studio.generation.video import (
+    build_video_base_draft,
+    build_video_context,
+    derive_video_preview,
+)
+from app.services.studio.generation.video.derive_preview import to_shot_video_prompt_preview_read
 from app.schemas.common import ApiResponse, PaginatedData, created_response, empty_response, success_response
 from app.schemas.skills.script_processing import StudioScriptExtractionDraft
 from app.services.studio.shot_extraction_draft import build_script_extraction_draft_for_shot
@@ -263,8 +268,18 @@ async def preview_shot_video_prompt(
     template_id: str | None = Query(None, description="指定视频提示词模板 ID；不传则使用默认模板"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ShotVideoPromptPreviewRead]:
-    data = await render_shot_video_prompt_preview(db, shot_id=shot_id, template_id=template_id)
-    return success_response(data)
+    derived = await derive_video_preview(
+        db,
+        base=build_video_base_draft(shot_id=shot_id, prompt=None),
+        context=await build_video_context(
+            db,
+            shot_id=shot_id,
+            reference_mode="text_only",
+            images=[],
+            template_id=template_id,
+        ),
+    )
+    return success_response(to_shot_video_prompt_preview_read(derived=derived))
 
 
 @router.get(

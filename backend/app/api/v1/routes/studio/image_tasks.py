@@ -18,24 +18,31 @@ from app.models.studio import (
     ShotFrameImage,
 )
 from app.schemas.common import ApiResponse, created_response, success_response
-from app.schemas.studio.shots import ShotLinkedAssetItem
+from app.schemas.studio.shots import RenderedShotFramePromptRead, ShotLinkedAssetItem
 from app.api.v1.routes.film.common import TaskCreated
 from app.services.studio.image_task_references import (
-    resolve_reference_file_ids_and_names_from_linked_items as _resolve_reference_file_ids_and_names_from_linked_items_service,
     resolve_reference_image_refs_by_file_ids as _resolve_reference_image_refs_by_file_ids_service,
 )
-from app.services.studio.image_task_prompts import (
-    build_actor_prompt_and_refs as _build_actor_prompt_and_refs_service,
-    build_asset_prompt_and_refs as _build_asset_prompt_and_refs_service,
-    build_character_prompt_and_refs as _build_character_prompt_and_refs_service,
-    build_shot_frame_prompt_and_refs as _build_shot_frame_prompt_and_refs_service,
+from app.services.studio.generation.asset_image import (
+    build_actor_image_base_draft as _build_actor_image_base_draft_service,
+    build_actor_image_submission_payload as _build_actor_image_submission_payload_service,
+    build_asset_image_base_draft as _build_asset_image_base_draft_service,
+    build_asset_image_context as _build_asset_image_context_service,
+    build_asset_image_submission_payload as _build_asset_image_submission_payload_service,
+    build_character_image_base_draft as _build_character_image_base_draft_service,
+    build_character_image_submission_payload as _build_character_image_submission_payload_service,
+    derive_asset_image_preview as _derive_asset_image_preview_service,
+)
+from app.services.studio.generation.frame import (
+    build_frame_base_draft as _build_frame_base_draft_service,
+    build_frame_context as _build_frame_context_service,
+    build_frame_submission_payload as _build_frame_submission_payload_service,
+    derive_frame_preview as _derive_frame_preview_service,
+)
+from app.services.studio.generation.frame.derive_preview import (
+    to_rendered_shot_frame_prompt_read as _to_rendered_shot_frame_prompt_read_service,
 )
 from app.services.studio.image_task_runner import create_image_task_and_link as _create_image_task_and_link_service
-from app.services.studio.image_task_validation import (
-    validate_actor_image as _validate_actor_image_service,
-    validate_asset_image_and_relation_type as _validate_asset_image_and_relation_type_service,
-    validate_character_image as _validate_character_image_service,
-)
 
 
 router = APIRouter()
@@ -100,13 +107,10 @@ class ShotFramePromptRenderRequest(BaseModel):
     """镜头分镜帧提示词渲染请求体。"""
 
     frame_type: ShotFrameType = Field(..., description="first | last | key")
-    model_id: str | None = Field(
-        None,
-        description="保留字段，当前渲染接口不使用；用于与前端调用参数保持一致。",
-    )
-    prompt: str | None = Field(
-        None,
-        description="可选提示词。为空时由后端基于分镜数据自动生成；非空时将参考图说明拼接后直接返回。",
+    prompt: str = Field(
+        ...,
+        description="原始基础提示词。渲染接口要求显式传入，用于生成最终提示词。",
+        min_length=1,
     )
     images: list[ShotLinkedAssetItem] = Field(
         default_factory=list,
@@ -141,14 +145,20 @@ async def create_actor_image_generation_task(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="prompt is required for actor generation",
         )
-    image_row = await _validate_actor_image_service(db, actor_id=actor_id, image_id=body.image_id)
-    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=body.images)
+    submission = await _build_actor_image_submission_payload_service(
+        db,
+        actor_id=actor_id,
+        image_id=body.image_id,
+        prompt=prompt,
+        images=body.images,
+    )
+    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=submission.images)
     task_id = await _create_image_task_and_link_service(
         db=db,
         model_id=body.model_id,
-        relation_type="actor_image",
-        relation_entity_id=str(image_row.id),
-        prompt=prompt,
+        relation_type=submission.relation_type,
+        relation_entity_id=submission.relation_entity_id,
+        prompt=submission.prompt,
         images=ref_images if ref_images else None,
     )
     return created_response(TaskCreated(task_id=task_id))
@@ -165,12 +175,14 @@ async def render_actor_image_prompt(
     body: StudioImageTaskRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RenderedPromptResponse]:
-    prompt, images, _image_row = await _build_actor_prompt_and_refs_service(
+    base = await _build_actor_image_base_draft_service(
         db,
         actor_id=actor_id,
         image_id=body.image_id,
     )
-    return success_response(RenderedPromptResponse(prompt=prompt, images=images))
+    context = _build_asset_image_context_service(base=base)
+    derived = _derive_asset_image_preview_service(base=base, context=context)
+    return success_response(RenderedPromptResponse(prompt=derived.prompt, images=derived.images))
 
 
 @router.post(
@@ -197,20 +209,22 @@ async def create_asset_image_generation_task(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="prompt is required for asset image generation",
         )
-    image_id, relation_type = await _validate_asset_image_and_relation_type_service(
+    submission = await _build_asset_image_submission_payload_service(
         db,
         asset_type=asset_type,
         asset_id=asset_id,
         image_id=body.image_id,
+        prompt=prompt,
+        images=body.images,
     )
-    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=body.images)
+    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=submission.images)
 
     task_id = await _create_image_task_and_link_service(
         db=db,
         model_id=body.model_id,
-        relation_type=relation_type,
-        relation_entity_id=str(image_id),
-        prompt=prompt,
+        relation_type=submission.relation_type,
+        relation_entity_id=submission.relation_entity_id,
+        prompt=submission.prompt,
         images=ref_images if ref_images else None,
     )
     return created_response(TaskCreated(task_id=task_id))
@@ -228,13 +242,15 @@ async def render_asset_image_prompt(
     body: StudioImageTaskRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RenderedPromptResponse]:
-    prompt, images, _relation_type = await _build_asset_prompt_and_refs_service(
+    base = await _build_asset_image_base_draft_service(
         db,
         asset_type=asset_type,
         asset_id=asset_id,
         image_id=body.image_id,
     )
-    return success_response(RenderedPromptResponse(prompt=prompt, images=images))
+    context = _build_asset_image_context_service(base=base)
+    derived = _derive_asset_image_preview_service(base=base, context=context)
+    return success_response(RenderedPromptResponse(prompt=derived.prompt, images=derived.images))
 
 
 @router.post(
@@ -259,14 +275,20 @@ async def create_character_image_generation_task(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="prompt is required for character image generation",
         )
-    image_row = await _validate_character_image_service(db, character_id=character_id, image_id=body.image_id)
-    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=body.images)
+    submission = await _build_character_image_submission_payload_service(
+        db,
+        character_id=character_id,
+        image_id=body.image_id,
+        prompt=prompt,
+        images=body.images,
+    )
+    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=submission.images)
     task_id = await _create_image_task_and_link_service(
         db=db,
         model_id=body.model_id,
-        relation_type="character_image",
-        relation_entity_id=str(image_row.id),
-        prompt=prompt,
+        relation_type=submission.relation_type,
+        relation_entity_id=submission.relation_entity_id,
+        prompt=submission.prompt,
         images=ref_images if ref_images else None,
     )
     return created_response(TaskCreated(task_id=task_id))
@@ -283,12 +305,14 @@ async def render_character_image_prompt(
     body: StudioImageTaskRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RenderedPromptResponse]:
-    prompt, images, _image_row = await _build_character_prompt_and_refs_service(
+    base = await _build_character_image_base_draft_service(
         db,
         character_id=character_id,
         image_id=body.image_id,
     )
-    return success_response(RenderedPromptResponse(prompt=prompt, images=images))
+    context = _build_asset_image_context_service(base=base)
+    derived = _derive_asset_image_preview_service(base=base, context=context)
+    return success_response(RenderedPromptResponse(prompt=derived.prompt, images=derived.images))
 
 
 @router.post(
@@ -312,8 +336,21 @@ async def create_shot_frame_image_generation_task(
     shot_detail = await db.get(ShotDetail, shot_id)
     if shot_detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ShotDetail not found")
-    file_ids, _names = await _resolve_reference_file_ids_and_names_from_linked_items_service(db, items=body.images)
-    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=file_ids)
+    base = _build_frame_base_draft_service(
+        shot_id=shot_id,
+        frame_type=body.frame_type,
+        prompt=prompt,
+    )
+    context = _build_frame_context_service(
+        shot_id=shot_id,
+        frame_type=body.frame_type,
+        items=body.images,
+    )
+    submission = _build_frame_submission_payload_service(
+        base=base,
+        context=context,
+    )
+    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=submission.images)
 
     # 通过 shot_id 与 frame_type 定位 ShotFrameImage，作为落库目标；若不存在则创建占位记录。
     shot_frame_image_stmt = (
@@ -341,20 +378,22 @@ async def create_shot_frame_image_generation_task(
         if not shot_frame_image.format:
             shot_frame_image.format = "png"
 
+    submission_extra = dict(submission.extra or {})
     task_id = await _create_image_task_and_link_service(
         db=db,
         model_id=body.model_id,
         relation_type="shot_frame_image",
         relation_entity_id=str(shot_frame_image.id),
-        prompt=prompt,
+        prompt=submission.prompt,
         images=ref_images if ref_images else None,
+        render_context=submission_extra.get("render_context"),
     )
     return created_response(TaskCreated(task_id=task_id))
 
 
 @router.post(
     "/shot/{shot_id}/frame-render-prompt",
-    response_model=ApiResponse[RenderedPromptResponse],
+    response_model=ApiResponse[RenderedShotFramePromptRead],
     status_code=status.HTTP_200_OK,
     summary="镜头分镜帧提示词渲染",
 )
@@ -362,22 +401,28 @@ async def render_shot_frame_prompt(
     shot_id: str,
     body: ShotFramePromptRenderRequest,
     db: AsyncSession = Depends(get_db),
-) -> ApiResponse[RenderedPromptResponse]:
+) -> ApiResponse[RenderedShotFramePromptRead]:
+    _ = shot_id, db
     prompt = (body.prompt or "").strip()
-    file_ids, names = await _resolve_reference_file_ids_and_names_from_linked_items_service(db, items=body.images)
-    if prompt:
-        if names:
-            lines = ["## 图片内容说明"]
-            for i, n in enumerate(names, start=1):
-                lines.append(f"图{i}: {n}")
-            lines.append("## 生成内容")
-            header = "\n".join(lines).strip() + "\n"
-            prompt = header + prompt
-        return success_response(RenderedPromptResponse(prompt=prompt, images=file_ids))
-
-    rendered_prompt, rendered_images, _detail = await _build_shot_frame_prompt_and_refs_service(
-        db,
+    if not prompt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="prompt is required for shot frame render",
+        )
+    base = _build_frame_base_draft_service(
         shot_id=shot_id,
         frame_type=body.frame_type,
+        prompt=prompt,
     )
-    return success_response(RenderedPromptResponse(prompt=rendered_prompt, images=rendered_images))
+    context = _build_frame_context_service(
+        shot_id=shot_id,
+        frame_type=body.frame_type,
+        items=body.images,
+    )
+    rendered = _to_rendered_shot_frame_prompt_read_service(
+        derived=_derive_frame_preview_service(
+            base=base,
+            context=context,
+        )
+    )
+    return success_response(rendered)

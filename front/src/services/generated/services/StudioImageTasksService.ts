@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApiResponse_RenderedPromptResponse_ } from '../models/ApiResponse_RenderedPromptResponse_';
+import type { ApiResponse_RenderedShotFramePromptRead_ } from '../models/ApiResponse_RenderedShotFramePromptRead_';
 import type { ApiResponse_TaskCreated_ } from '../models/ApiResponse_TaskCreated_';
 import type { ShotFrameImageTaskRequest } from '../models/ShotFrameImageTaskRequest';
 import type { ShotFramePromptRenderRequest } from '../models/ShotFramePromptRenderRequest';
@@ -214,7 +215,7 @@ export class StudioImageTasksService {
     }: {
         shotId: string,
         requestBody: ShotFramePromptRenderRequest,
-    }): CancelablePromise<ApiResponse_RenderedPromptResponse_> {
+    }): CancelablePromise<ApiResponse_RenderedShotFramePromptRead_> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/studio/image-tasks/shot/{shot_id}/frame-render-prompt',

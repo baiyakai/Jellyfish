@@ -40,6 +40,7 @@ async def preview_video_generation_prompt(
         shot_id=body.shot_id,
         reference_mode=body.reference_mode,
         prompt=body.prompt,
+        images=body.images,
     )
     return success_response(VideoPromptPreviewResponse(prompt=prompt, images=images))
 

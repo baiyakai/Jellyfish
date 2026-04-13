@@ -22,6 +22,48 @@ function normalizeUpdateImagePayload(payload: UpdateImagePayload): UpdateImagePa
 }
 
 export const assetAdapters = {
+  character: {
+    missingAssetIdText: '缺少 character_id',
+    assetDisplayName: '角色',
+    backTo: '/projects',
+    relationType: 'character_image',
+    getAsset: async (id: string) => {
+      const res = await StudioEntitiesApi.get('character', id)
+      return (res.data ?? null) as any | null
+    },
+    updateAsset: async (id: string, payload) => {
+      const res = await StudioEntitiesApi.update('character', id, payload as Record<string, unknown>)
+      return (res.data ?? null) as any | null
+    },
+    listImages: async (id: string) => {
+      const res = await StudioEntitiesApi.listImages('character', id, { page: 1, pageSize: 100 })
+      return (res.data?.items ?? []) as any[]
+    },
+    createImageSlot: async (id: string, angle) => {
+      await StudioEntitiesApi.createImage('character', id, { view_angle: angle })
+    },
+    updateImage: async (id: string, imageId: number, payload) => {
+      await StudioEntitiesApi.updateImage('character', id, imageId, normalizeUpdateImagePayload(payload))
+    },
+    renderPrompt: async (id: string, imageId: number) => {
+      const res = await StudioImageTasksService.renderCharacterImagePromptApiV1StudioImageTasksCharactersCharacterIdRenderPromptPost({
+        characterId: id,
+        requestBody: { image_id: imageId, model_id: null } as any,
+      })
+      const data = res.data
+      return {
+        prompt: (data?.prompt ?? '') as string,
+        images: (data?.images ?? []) as string[],
+      }
+    },
+    createGenerationTask: async (id: string, imageId: number, payload: { prompt: string; images: string[] }) => {
+      const res = await StudioImageTasksService.createCharacterImageGenerationTaskApiV1StudioImageTasksCharactersCharacterIdImageTasksPost({
+        characterId: id,
+        requestBody: { image_id: imageId, model_id: null, prompt: payload.prompt, images: payload.images } as any,
+      })
+      return res.data?.task_id ?? null
+    },
+  } satisfies AdapterConfig<any, any>,
   actor: {
     missingAssetIdText: '缺少 actor_id',
     assetDisplayName: '演员',
@@ -197,4 +239,3 @@ export const assetAdapters = {
     },
   } satisfies AdapterConfig<any, any>,
 }
-

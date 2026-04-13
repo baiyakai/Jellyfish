@@ -343,10 +343,10 @@ def test_preview_shot_video_prompt_returns_success_envelope(client: TestClient, 
             "negative_prompt": "",
         }
 
-    async def _fake_preview(*_args, **_kwargs):
+    async def _fake_derive(*_args, **_kwargs):
         return _Preview()
 
-    monkeypatch.setattr(route, "render_shot_video_prompt_preview", _fake_preview)
+    monkeypatch.setattr(route, "derive_video_preview", _fake_derive)
     app.dependency_overrides[get_db] = _override_db(db)
     try:
         response = client.get("/api/v1/studio/shots/shot-1/video-prompt-preview")
