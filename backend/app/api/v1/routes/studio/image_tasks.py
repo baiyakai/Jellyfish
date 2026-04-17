@@ -40,6 +40,7 @@ from app.services.studio.generation.frame import (
     build_frame_submission_payload as _build_frame_submission_payload_service,
     derive_frame_preview as _derive_frame_preview_service,
 )
+from app.services.film.shot_frame_prompt_tasks import build_run_args as _build_shot_frame_prompt_run_args_service
 from app.services.studio.generation.frame.derive_preview import (
     to_rendered_shot_frame_prompt_read as _to_rendered_shot_frame_prompt_read_service,
 )
@@ -133,6 +134,38 @@ class RenderedPromptResponse(BaseModel):
         default_factory=list,
         description="参考图 file_id 列表（自动选择；顺序有效）",
     )
+
+
+async def _load_frame_render_guidance(
+    *,
+    db: AsyncSession,
+    shot_id: str,
+    frame_type: ShotFrameType,
+) -> dict[str, str]:
+    """读取最终图片提示词需要保留的高优先级镜头约束。"""
+    try:
+        run_args = await _build_shot_frame_prompt_run_args_service(
+            db,
+            shot_id=shot_id,
+            frame_type=frame_type.value if hasattr(frame_type, "value") else str(frame_type),
+        )
+    except HTTPException:
+        return {
+            "director_command_summary": "",
+            "continuity_guidance": "",
+            "frame_specific_guidance": "",
+            "composition_anchor": "",
+            "screen_direction_guidance": "",
+        }
+
+    input_dict = dict(run_args.get("input") or {})
+    return {
+        "director_command_summary": str(input_dict.get("director_command_summary") or "").strip(),
+        "continuity_guidance": str(input_dict.get("continuity_guidance") or "").strip(),
+        "frame_specific_guidance": str(input_dict.get("frame_specific_guidance") or "").strip(),
+        "composition_anchor": str(input_dict.get("composition_anchor") or "").strip(),
+        "screen_direction_guidance": str(input_dict.get("screen_direction_guidance") or "").strip(),
+    }
 
 
 
@@ -345,10 +378,20 @@ async def create_shot_frame_image_generation_task(
     shot_detail = await db.get(ShotDetail, shot_id)
     if shot_detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ShotDetail not found")
+    render_guidance = await _load_frame_render_guidance(
+        db=db,
+        shot_id=shot_id,
+        frame_type=body.frame_type,
+    )
     base = _build_frame_base_draft_service(
         shot_id=shot_id,
         frame_type=body.frame_type,
         prompt=prompt,
+        director_command_summary=render_guidance["director_command_summary"],
+        continuity_guidance=render_guidance["continuity_guidance"],
+        frame_specific_guidance=render_guidance["frame_specific_guidance"],
+        composition_anchor=render_guidance["composition_anchor"],
+        screen_direction_guidance=render_guidance["screen_direction_guidance"],
     )
     context = _build_frame_context_service(
         shot_id=shot_id,
@@ -414,17 +457,26 @@ async def render_shot_frame_prompt(
     body: ShotFramePromptRenderRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RenderedShotFramePromptRead]:
-    _ = shot_id, db
     prompt = (body.prompt or "").strip()
     if not prompt:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="prompt is required for shot frame render",
         )
+    render_guidance = await _load_frame_render_guidance(
+        db=db,
+        shot_id=shot_id,
+        frame_type=body.frame_type,
+    )
     base = _build_frame_base_draft_service(
         shot_id=shot_id,
         frame_type=body.frame_type,
         prompt=prompt,
+        director_command_summary=render_guidance["director_command_summary"],
+        continuity_guidance=render_guidance["continuity_guidance"],
+        frame_specific_guidance=render_guidance["frame_specific_guidance"],
+        composition_anchor=render_guidance["composition_anchor"],
+        screen_direction_guidance=render_guidance["screen_direction_guidance"],
     )
     context = _build_frame_context_service(
         shot_id=shot_id,

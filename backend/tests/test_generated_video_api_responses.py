@@ -53,7 +53,31 @@ def test_preview_video_generation_prompt_returns_success_envelope(client: TestCl
     db = _FakeDB()
 
     async def _fake_preview(*_args, **_kwargs):
-        return "视频预览提示词", ["file-1", "file-2"], object()
+        return "视频预览提示词", ["file-1", "file-2"], {
+            "shot_id": "shot-1",
+            "title": "镜头一",
+            "script_excerpt": "主角转身看向门口。",
+            "action_beats": ["主角转身", "视线停在门口"],
+            "action_beat_phases": [
+                {"text": "主角转身", "phase": "trigger"},
+                {"text": "视线停在门口", "phase": "aftermath"},
+            ],
+            "previous_shot_summary": "标题：镜头零；剧本摘录：主角推门进入走廊",
+            "next_shot_goal": "标题：镜头二；主角停住动作，保持警惕",
+            "continuity_guidance": "承接上一镜头动作，不要像全新场面重新开局",
+            "composition_anchor": "以走廊门口作为空间锚点",
+            "screen_direction_guidance": "保持主角朝向和视线落点连续",
+            "dialogue_summary": "",
+            "characters": [],
+            "scene": None,
+            "props": [],
+            "costumes": [],
+            "camera": {"camera_shot": "MS", "angle": "EYE_LEVEL", "movement": "STATIC", "duration": 4},
+            "atmosphere": "紧张",
+            "visual_style": "现实",
+            "style": "真人都市",
+            "negative_prompt": "",
+        }
 
     monkeypatch.setattr(route, "preview_prompt_and_images", _fake_preview)
     app.dependency_overrides[get_db] = _override_db(db)
@@ -77,6 +101,8 @@ def test_preview_video_generation_prompt_returns_success_envelope(client: TestCl
     assert body["message"] == "success"
     assert body["data"]["prompt"] == "视频预览提示词"
     assert body["data"]["images"] == ["file-1", "file-2"]
+    assert body["data"]["pack"]["previous_shot_summary"].startswith("标题：镜头零")
+    assert body["data"]["pack"]["next_shot_goal"].startswith("标题：镜头二")
 
 
 def test_preview_video_generation_prompt_not_found_returns_api_response(

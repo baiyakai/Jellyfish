@@ -97,15 +97,33 @@ async def find_active_divide_task(
     *,
     chapter_id: str,
 ) -> GenerationTask | None:
+    return await _find_active_task(
+        db,
+        relation_type=CHAPTER_DIVISION_RELATION_TYPE,
+        relation_entity_id=chapter_id,
+    )
+
+
+async def _find_active_task(
+    db: AsyncSession,
+    *,
+    relation_type: str,
+    relation_entity_id: str,
+) -> GenerationTask | None:
+    """按业务关联查询任意活动任务。
+
+    这里的目标只是“是否已有运行中的同类任务”，不需要挑出“最新”那一条。
+    因此直接从 relation link 侧过滤，再按活动状态做一次连接，并去掉排序，
+    避免在任务量大时触发 MySQL 的大排序与 sort buffer 压力。
+    """
     stmt = (
         select(GenerationTask)
         .join(GenerationTaskLink, GenerationTaskLink.task_id == GenerationTask.id)
         .where(
-            GenerationTaskLink.relation_type == CHAPTER_DIVISION_RELATION_TYPE,
-            GenerationTaskLink.relation_entity_id == chapter_id,
+            GenerationTaskLink.relation_type == relation_type,
+            GenerationTaskLink.relation_entity_id == relation_entity_id,
             GenerationTask.status.in_(_ACTIVE_TASK_STATUSES),
         )
-        .order_by(GenerationTask.updated_at.desc(), GenerationTask.id.desc())
         .limit(1)
     )
     return (await db.execute(stmt)).scalars().first()
@@ -171,18 +189,11 @@ async def find_active_extract_task(
     *,
     chapter_id: str,
 ) -> GenerationTask | None:
-    stmt = (
-        select(GenerationTask)
-        .join(GenerationTaskLink, GenerationTaskLink.task_id == GenerationTask.id)
-        .where(
-            GenerationTaskLink.relation_type == SCRIPT_EXTRACTION_RELATION_TYPE,
-            GenerationTaskLink.relation_entity_id == chapter_id,
-            GenerationTask.status.in_(_ACTIVE_TASK_STATUSES),
-        )
-        .order_by(GenerationTask.updated_at.desc(), GenerationTask.id.desc())
-        .limit(1)
+    return await _find_active_task(
+        db,
+        relation_type=SCRIPT_EXTRACTION_RELATION_TYPE,
+        relation_entity_id=chapter_id,
     )
-    return (await db.execute(stmt)).scalars().first()
 
 
 async def find_active_merge_task(
@@ -190,18 +201,11 @@ async def find_active_merge_task(
     *,
     relation_entity_id: str,
 ) -> GenerationTask | None:
-    stmt = (
-        select(GenerationTask)
-        .join(GenerationTaskLink, GenerationTaskLink.task_id == GenerationTask.id)
-        .where(
-            GenerationTaskLink.relation_type == ENTITY_MERGE_RELATION_TYPE,
-            GenerationTaskLink.relation_entity_id == relation_entity_id,
-            GenerationTask.status.in_(_ACTIVE_TASK_STATUSES),
-        )
-        .order_by(GenerationTask.updated_at.desc(), GenerationTask.id.desc())
-        .limit(1)
+    return await _find_active_task(
+        db,
+        relation_type=ENTITY_MERGE_RELATION_TYPE,
+        relation_entity_id=relation_entity_id,
     )
-    return (await db.execute(stmt)).scalars().first()
 
 
 async def find_active_consistency_task(
@@ -209,18 +213,11 @@ async def find_active_consistency_task(
     *,
     relation_entity_id: str,
 ) -> GenerationTask | None:
-    stmt = (
-        select(GenerationTask)
-        .join(GenerationTaskLink, GenerationTaskLink.task_id == GenerationTask.id)
-        .where(
-            GenerationTaskLink.relation_type == CONSISTENCY_CHECK_RELATION_TYPE,
-            GenerationTaskLink.relation_entity_id == relation_entity_id,
-            GenerationTask.status.in_(_ACTIVE_TASK_STATUSES),
-        )
-        .order_by(GenerationTask.updated_at.desc(), GenerationTask.id.desc())
-        .limit(1)
+    return await _find_active_task(
+        db,
+        relation_type=CONSISTENCY_CHECK_RELATION_TYPE,
+        relation_entity_id=relation_entity_id,
     )
-    return (await db.execute(stmt)).scalars().first()
 
 
 async def find_active_variant_task(
@@ -228,18 +225,11 @@ async def find_active_variant_task(
     *,
     relation_entity_id: str,
 ) -> GenerationTask | None:
-    stmt = (
-        select(GenerationTask)
-        .join(GenerationTaskLink, GenerationTaskLink.task_id == GenerationTask.id)
-        .where(
-            GenerationTaskLink.relation_type == VARIANT_ANALYSIS_RELATION_TYPE,
-            GenerationTaskLink.relation_entity_id == relation_entity_id,
-            GenerationTask.status.in_(_ACTIVE_TASK_STATUSES),
-        )
-        .order_by(GenerationTask.updated_at.desc(), GenerationTask.id.desc())
-        .limit(1)
+    return await _find_active_task(
+        db,
+        relation_type=VARIANT_ANALYSIS_RELATION_TYPE,
+        relation_entity_id=relation_entity_id,
     )
-    return (await db.execute(stmt)).scalars().first()
 
 
 async def _find_active_analysis_task(
@@ -248,18 +238,11 @@ async def _find_active_analysis_task(
     relation_type: str,
     relation_entity_id: str,
 ) -> GenerationTask | None:
-    stmt = (
-        select(GenerationTask)
-        .join(GenerationTaskLink, GenerationTaskLink.task_id == GenerationTask.id)
-        .where(
-            GenerationTaskLink.relation_type == relation_type,
-            GenerationTaskLink.relation_entity_id == relation_entity_id,
-            GenerationTask.status.in_(_ACTIVE_TASK_STATUSES),
-        )
-        .order_by(GenerationTask.updated_at.desc(), GenerationTask.id.desc())
-        .limit(1)
+    return await _find_active_task(
+        db,
+        relation_type=relation_type,
+        relation_entity_id=relation_entity_id,
     )
-    return (await db.execute(stmt)).scalars().first()
 
 
 def pick_merge_relation_entity_id(*, chapter_id: str | None, project_id: str | None) -> str:

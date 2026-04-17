@@ -5,6 +5,7 @@ import type {
   EntityNameExistenceItem,
   ShotAssetOverviewItem,
   ShotAssetsOverviewRead,
+  ShotDetailRead,
   ShotDialogLineRead,
   ShotDialogLineUpdate,
   ShotExtractionSummaryRead,
@@ -17,6 +18,7 @@ import {
   StudioChaptersService,
   StudioEntitiesService,
   StudioProjectsService,
+  StudioShotDetailsService,
   StudioShotDialogLinesService,
   StudioShotsService,
 } from '../../../services/generated'
@@ -195,7 +197,9 @@ export function ChapterShotEditPage() {
   const [scriptExcerpt, setScriptExcerpt] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [semanticSaving, setSemanticSaving] = useState(false)
   const [preparationState, setPreparationState] = useState<ShotPreparationStateRead | null>(null)
+  const [shotDetail, setShotDetail] = useState<ShotDetailRead | null>(null)
   const [shotAssetsOverview, setShotAssetsOverview] = useState<ShotAssetsOverviewRead | null>(null)
   const preparationStateRequestSeqRef = useRef(0)
   const [extractingAssets, setExtractingAssets] = useState(false)
@@ -328,7 +332,7 @@ export function ChapterShotEditPage() {
     setLoading(true)
     setDialogLoading(true)
     try {
-      const [projectRes, chRes, listRes, preparationRes] = await Promise.all([
+      const [projectRes, chRes, listRes, preparationRes, detailRes] = await Promise.all([
         StudioProjectsService.getProjectApiV1StudioProjectsProjectIdGet({ projectId }),
         StudioChaptersService.getChapterApiV1StudioChaptersChapterIdGet({ chapterId }),
         StudioShotsService.listShotsApiV1StudioShotsGet({
@@ -339,6 +343,7 @@ export function ChapterShotEditPage() {
           isDesc: false,
         }),
         StudioShotsService.getShotPreparationStateApiApiV1StudioShotsShotIdPreparationStateGet({ shotId }),
+        StudioShotDetailsService.getShotDetailApiV1StudioShotDetailsShotIdGet({ shotId }),
       ])
       const nextVisualStyle = projectRes.data?.visual_style
       const nextStyle = projectRes.data?.style
@@ -355,6 +360,7 @@ export function ChapterShotEditPage() {
 
       const items = listRes.data?.items ?? []
       const preparationState = preparationRes.data ?? null
+      const detail = detailRes.data ?? null
       const s = preparationState?.shot ?? null
 
       if (!s) {
@@ -369,6 +375,7 @@ export function ChapterShotEditPage() {
       }
 
       setPreparationState(preparationState)
+      setShotDetail(detail)
       setShot(s)
       setTitle(s.title ?? '')
       setScriptExcerpt(s.script_excerpt ?? '')
@@ -719,26 +726,63 @@ export function ChapterShotEditPage() {
       return
     }
     setSaving(true)
+    setSemanticSaving(true)
     try {
-      const res = await StudioShotsService.updateShotApiV1StudioShotsShotIdPatch({
-        shotId: shot.id,
-        requestBody: {
-          title: title.trim(),
-          script_excerpt: scriptExcerpt.trim() ? scriptExcerpt.trim() : null,
-        },
-      })
-      const next = res.data
+      const [shotRes, detailRes] = await Promise.all([
+        StudioShotsService.updateShotApiV1StudioShotsShotIdPatch({
+          shotId: shot.id,
+          requestBody: {
+            title: title.trim(),
+            script_excerpt: scriptExcerpt.trim() ? scriptExcerpt.trim() : null,
+          },
+        }),
+        shotDetail
+          ? StudioShotDetailsService.updateShotDetailApiV1StudioShotDetailsShotIdPatch({
+              shotId: shot.id,
+              requestBody: {
+                camera_shot: shotDetail.camera_shot,
+                angle: shotDetail.angle,
+                movement: shotDetail.movement,
+                duration: shotDetail.duration ?? 4,
+                action_beats: shotDetail.action_beats ?? [],
+              },
+            })
+          : Promise.resolve({ data: null } as any),
+      ])
+
+      const next = shotRes.data
+      const nextDetail = detailRes.data ?? null
+      if (nextDetail) {
+        setShotDetail(nextDetail)
+      }
       if (next) {
         setShot(next)
         setShots((prev) => prev.map((x) => (x.id === next.id ? next : x)))
-        message.success('已保存')
+        message.success('已保存基础信息与镜头语言')
       }
     } catch {
       message.error('保存失败')
     } finally {
       setSaving(false)
+      setSemanticSaving(false)
     }
-  }, [scriptExcerpt, shot, title])
+  }, [scriptExcerpt, shot, shotDetail, title])
+
+  const updateShotSemantic = useCallback((patch: {
+    camera_shot?: ShotDetailRead['camera_shot']
+    angle?: ShotDetailRead['angle']
+    movement?: ShotDetailRead['movement']
+    duration?: number
+    action_beats?: Array<string>
+  }) => {
+    setShotDetail((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        ...patch,
+      }
+    })
+  }, [])
 
   const updateSkipExtraction = useCallback(
     async (skip: boolean) => {
@@ -1146,16 +1190,21 @@ export function ChapterShotEditPage() {
     return <Navigate to="/projects" replace />
   }
 
-  const hasTitleAndExcerpt = !!title.trim() && !!scriptExcerpt.trim()
+  const hasTitleAndExcerpt = preparationState?.basic_info_ready ?? (!!title.trim() && !!scriptExcerpt.trim())
+  const hasSemanticDefaults = preparationState?.semantic_defaults_ready
+    ?? (!!shotDetail?.camera_shot && !!shotDetail?.angle && !!shotDetail?.movement && (shotDetail?.duration ?? 0) > 0)
+  const actionBeatsCount = preparationState?.action_beats_count
+    ?? (shotDetail?.action_beats ?? []).filter((item) => item.trim().length > 0).length
+  const actionBeatsReady = preparationState?.action_beats_ready ?? (actionBeatsCount > 0)
   const linkedAssetCount = shotAssetsOverview?.summary.linked_count ?? 0
   const pendingAssetCount = shotAssetsOverview?.summary.pending_count ?? 0
   const pendingConfirmCount = preparationState?.pending_confirm_count ?? (pendingAssetCount + extractedDialogLines.length)
   const assetsReady = !!shotAssetsOverview && pendingAssetCount === 0
   const dialogsReady = extractedDialogLines.length === 0
   const statusReady = preparationState?.ready_for_generation ?? (shot?.status === 'ready')
-  const basicInfoReady = hasTitleAndExcerpt
+  const basicInfoReady = hasTitleAndExcerpt && hasSemanticDefaults
   const confirmReady = pendingConfirmCount === 0
-  const currentShotActionable = shot ? isActionablePreparationShot(shot) || !basicInfoReady : false
+  const currentShotActionable = shot ? isActionablePreparationShot(shot) || !basicInfoReady || !actionBeatsReady : false
   const extractionSummary = getShotExtractionSummary(shot)
   const extractionStateMeta = getExtractionStateMeta(shot, pendingConfirmCount)
   const goToStudio = () => navigate(getChapterStudioPath(projectId, chapterId), {
@@ -1164,14 +1213,24 @@ export function ChapterShotEditPage() {
   const nextStepTitle = statusReady ? '下一步：进入分镜工作室继续生成' : '下一步：先完成镜头准备，再进入工作室'
   const nextStepDescription = statusReady
     ? '当前镜头的信息提取确认已经完成，接下来更适合去分镜工作室继续关键帧、参考图、视频提示词和视频生成。'
-    : '当前镜头仍有提取候选或对白待确认。先在这里完成准备，准备完成后再进入分镜工作室继续生成。'
+    : actionBeatsReady
+      ? '当前镜头仍有提取候选、对白或镜头基础信息待确认。先在这里完成准备，准备完成后再进入分镜工作室继续生成。'
+      : '当前镜头的动作拍点还没有确认。建议先补齐动作序列，再进入工作室继续关键帧和视频生成。'
 
   const checklistItems = [
     {
       key: 'script',
-      label: '标题与摘录',
-      tone: hasTitleAndExcerpt ? 'success' : 'warning',
-      text: hasTitleAndExcerpt ? '已保存基础信息' : '请先补标题和剧本摘录',
+      label: '标题、摘录与镜头语言',
+      tone: basicInfoReady ? 'success' : 'warning',
+      text: basicInfoReady ? '已确认基础信息与镜头语言' : '请先补齐标题、剧本摘录和镜头语言',
+    },
+    {
+      key: 'action_beats',
+      label: '动作拍点',
+      tone: actionBeatsReady ? 'success' : 'warning',
+      text: actionBeatsReady
+        ? `已确认 ${actionBeatsCount} 条动作拍点`
+        : '请先确认当前镜头的动作变化序列',
     },
     {
       key: 'assets',
@@ -1266,8 +1325,18 @@ export function ChapterShotEditPage() {
           title={title}
           scriptExcerpt={scriptExcerpt}
           saving={saving}
+          semanticSaving={semanticSaving}
+          semantic={{
+            camera_shot: shotDetail?.camera_shot ?? undefined,
+            angle: shotDetail?.angle ?? undefined,
+            movement: shotDetail?.movement ?? undefined,
+            duration: shotDetail?.duration ?? 4,
+            action_beats: shotDetail?.action_beats ?? [],
+          }}
+          actionBeatPhases={preparationState?.action_beat_phases ?? []}
           onTitleChange={setTitle}
           onScriptExcerptChange={setScriptExcerpt}
+          onSemanticChange={updateShotSemantic}
           onSave={() => void saveShot()}
         />
       ),

@@ -69,6 +69,17 @@ backend/app/services/studio/generation/
 - `build_submission`
 
 当前 `preview-prompt` 与 `create video task` 已共享同一份 `reference_mode + images` 上下文。
+其中工作室当前使用的 `film/tasks/video/preview-prompt` 也会返回完整 `pack`：
+
+- `previous_shot_summary`
+- `next_shot_goal`
+- `continuity_guidance`
+- `composition_anchor`
+- `screen_direction_guidance`
+- `action_beats`
+- `action_beat_phases`
+
+因此工作室视频提示词预览与 studio 侧底层 pack 现在保持同源，不再出现“提示词有值但连续性上下文始终为空”的接口分叉。
 
 当前视频参数已收口为以 `ratio` 为唯一业务主参数：
 
@@ -81,6 +92,65 @@ backend/app/services/studio/generation/
 - 关键帧图片若用于视频参考，提交时会显式携带 `target_ratio + resolution_profile`
 - 后端根据当前默认图片模型 capability 解析对应 `size`，保证关键帧画幅与目标视频保持一致
 - 工作室会展示当前关键帧规格预览：`ratio + resolution_profile -> size`
+- 视频提示词预览当前会额外暴露 `action_beats / previous_shot_summary / next_shot_goal / continuity_guidance`
+- 视频提示词预览当前会额外暴露 `composition_anchor`
+- 视频提示词预览当前会额外暴露 `screen_direction_guidance`
+- `action_beats` 由当前镜头剧本摘录、镜头描述与对白规则化提炼，用于降低“像静态画面说明”的问题
+- continuity 字段由相邻镜头摘要生成，用于降低镜头切换时的突兀感
+- `composition_anchor` 由景别、运镜、主场景、主角色与相邻镜头关系规则化生成，用于降低构图和轴线突变
+- `screen_direction_guidance` 由机位角度、对白关系、相邻镜头场景连续性规则化生成，用于降低人物翻面与反打跳轴
+- 若视频模板未显式消费这些 guidance，系统会在模板渲染结果后自动补一段稳定的“镜头执行约束”，避免新字段只存在于 preview pack 中
+- 即便视频走手动 prompt 分支，系统当前也会追加同一层 guidance 补强，避免手动文本完全绕过镜头连续性与构图约束
+- 分镜帧 `frame-render-prompt` 当前也会把 `director_command_summary` 与必要的 `continuity_guidance` 轻量补入最终图片提示词
+- 分镜帧 `frame-render-prompt` 当前也会把必要的 `frame_specific_guidance` 作为“当前帧职责”候选补入最终图片提示词
+- 分镜帧 `frame-render-prompt` 当前也会把 `composition_anchor` 轻量补入最终图片提示词
+- 分镜帧 `frame-render-prompt` 当前也会把 `screen_direction_guidance` 轻量补入最终图片提示词
+  - 因此关键帧提示词预览中看到的高优先级导演约束，不再只停留在调试展示
+  - 最终提交给图片模型的 render prompt 会显式带上这层收敛后的约束、当前帧职责、构图重心与朝向/视线要求
+- 对于首帧，当前系统会优先强调“触发瞬间 / 初始反应 / 未完成态”表达，避免提示词直接落到后续完成动作或最终姿态
+- 为避免 prompt 膨胀，这层收敛当前最多只保留 3 条 guidance
+- 当前默认优先级为：`director_command_summary` > `continuity_guidance` > `screen_direction_guidance` > `composition_anchor`
+- 这层优先级还会按 `frame_type` 做动态微调：
+  - `first` 更偏向保留 `composition_anchor`
+  - `key` / `last` 更偏向保留 `screen_direction_guidance`
+  - 目的是让建立镜头先稳住空间，对峙/反打/收束镜头先稳住视线与左右轴线
+- 前端关键帧提示词预览当前会直接展示：
+  - “基础提示词生成依据”，用于说明 guidance 主要先服务于上游基础提示词生成
+  - “最终图片提示词收敛结果”，用于说明只有少量 guidance 会被再次补进最终图片 prompt
+  - 最终 render prompt 实际保留了哪些 guidance
+  - 哪些 guidance 因压缩策略被舍弃
+  - 每条 guidance 被保留或压缩的原因说明
+  - 同时提供更短的 `reason_tag`，例如 `首帧保空间`、`关键帧保轴线`
+  - 这样可以直接解释“为什么预览里有 4 条规则，但最终 prompt 只用了 3 条”
+- 图片任务提交后，`render_context` 当前也会保留这组 guidance 决策详情
+  - 因此任务链与预览链现在共享同一份“保留 / 压缩 / 原因”上下文
+- 项目级信息提取当前还会输出镜头语言默认建议
+  - `semantic_suggestion.camera_shot`
+  - `semantic_suggestion.angle`
+  - `semantic_suggestion.movement`
+  - `semantic_suggestion.duration`
+  - `semantic_suggestion.action_beats`
+- `extract / extract-async` 在同步资产候选与对白候选之外，会按镜头序号将上述默认建议回写到 `ShotDetail`
+  - 因此 `camera_shot / angle / movement / duration` 不再只依赖分镜写库时的硬编码初始值
+  - `action_beats` 也会作为镜头动作拍点真值回写到 `ShotDetail`
+  - 工作室中的镜头语言微调，修改的也是这同一份 `ShotDetail` 真值
+- 分镜准备页聚合状态当前也会显式返回：
+  - `basic_info_ready`
+  - `semantic_defaults_ready`
+  - `action_beats_ready`
+  - `action_beats_count`
+  - `action_beat_phases`
+  - `ready_for_generation`
+  - 其中 `ready_for_generation` 表示“准备页视角下可进入生成”，不等同于单纯的 `shot.status = ready`
+- 视频链当前会优先消费 `ShotDetail.action_beats`
+  - 只有在镜头尚未确认动作拍点时，才回退到基于 `script_excerpt + description + dialogue` 的规则化提炼
+- 关键帧链当前也会优先消费 `ShotDetail.action_beats`
+  - 后端会先对动作拍点做一层轻量 `trigger / peak / aftermath` 推断
+  - 首帧优先消费触发阶段拍点
+  - 关键帧优先消费峰值阶段拍点
+  - 尾帧优先消费收束阶段拍点
+- 视频 prompt 预览当前也会直接暴露这层阶段推断结果
+  - 因此视频链与关键帧链现在会用同一套 `trigger / peak / aftermath` 标签来展示镜头内部动作过程
 
 ### `asset_image`
 

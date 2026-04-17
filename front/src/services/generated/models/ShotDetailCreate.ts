@@ -60,6 +60,10 @@ export type ShotDetailCreate = {
      */
     vfx_note?: string;
     /**
+     * 动作拍点（按时间顺序排列）
+     */
+    action_beats?: Array<string>;
+    /**
      * 镜头分镜首帧提示词
      */
     first_frame_prompt?: string;

@@ -97,6 +97,7 @@ import type {
   ShotRuntimeSummaryRead,
   ProjectSceneLinkRead,
   ShotStatus,
+  ShotVideoPromptPackRead,
 } from '../../../services/generated'
 import { listTaskLinksNormalized } from '../../../services/filmTaskLinks'
 import { buildFileDownloadUrl, resolveAssetUrl } from '../assets/utils'
@@ -129,6 +130,10 @@ type ShotFramePromptQualityChecks = {
 type FramePromptDerived = {
   basePrompt: string
   renderedPrompt: string
+  selectedGuidance: string[]
+  droppedGuidance: string[]
+  selectedGuidanceDetails: Array<{ text: string; category: string; reasonTag: string; reason: string }>
+  droppedGuidanceDetails: Array<{ text: string; category: string; reasonTag: string; reason: string }>
   images: string[]
   mappings: ShotFramePromptMappingRead[]
 }
@@ -136,6 +141,7 @@ type VideoReferenceMode = 'first' | 'last' | 'key' | 'first_last' | 'first_last_
 type VideoPromptDerived = {
   prompt: string
   images: string[]
+  pack: ShotVideoPromptPackRead | null
 }
 
 function normalizeFrameExclusiveTags(tags: string[]): string[] {
@@ -157,6 +163,77 @@ function readDebugContextText(
   if (!context) return ''
   const value = context[key]
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function buildKeyframeGuidanceSummary(items: string[]): string[] {
+  const result: string[] = []
+  const seen = new Set<string>()
+  items
+    .flatMap((item) => item.split('；'))
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .forEach((item) => {
+      if (seen.has(item)) return
+      seen.add(item)
+      result.push(item)
+    })
+  return result
+}
+
+function stripDirectiveLevelPrefix(item: string): string {
+  const text = String(item || '').trim()
+  if (text.startsWith('必须：')) return text.slice(3).trim()
+  if (text.startsWith('优先：')) return text.slice(3).trim()
+  return text
+}
+
+function parseDirectorCommandSummary(summary: string): Array<{
+  level: 'must' | 'prefer'
+  text: string
+}> {
+  return String(summary || '')
+    .split('；')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      if (item.startsWith('必须：')) {
+        return { level: 'must' as const, text: item.slice(3).trim() }
+      }
+      if (item.startsWith('优先：')) {
+        return { level: 'prefer' as const, text: item.slice(3).trim() }
+      }
+      return { level: 'prefer' as const, text: item }
+    })
+}
+
+function buildGuidanceLevelSummary(
+  parsedDirectorCommands: Array<{ level: 'must' | 'prefer'; text: string }>,
+  guidanceSummary: string[],
+): { must: number; prefer: number; normal: number } {
+  const must = parsedDirectorCommands.filter((item) => item.level === 'must').length
+  const prefer = parsedDirectorCommands.filter((item) => item.level === 'prefer').length
+  const parsedTexts = new Set(parsedDirectorCommands.map((item) => item.text.trim()).filter(Boolean))
+  const normal = guidanceSummary
+    .map((item) => stripDirectiveLevelPrefix(item))
+    .filter((item) => item && !parsedTexts.has(item)).length
+  return { must, prefer, normal }
+}
+
+function buildActionBeatPhaseTags(summary: string): Array<{ text: string; phaseLabel: string }> {
+  return String(summary || '')
+    .split('；')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const matched = item.match(/^\d+\.\s*(触发|峰值|收束)\s*·\s*(.+)$/)
+      if (!matched) {
+        return { phaseLabel: '阶段', text: item }
+      }
+      return {
+        phaseLabel: matched[1],
+        text: matched[2].trim(),
+      }
+    })
 }
 
 type InspectorMode = 'push' | 'overlay'
@@ -2951,10 +3028,13 @@ function Inspector(props: {
   const [keyframePromptPreviewFrameType, setKeyframePromptPreviewFrameType] = useState<PromptFrameType>('key')
   const [keyframePromptDebugContext, setKeyframePromptDebugContext] = useState<ShotFramePromptDebugContext | null>(null)
   const [keyframePromptDebugCollapsed, setKeyframePromptDebugCollapsed] = useState(true)
+  const [keyframeDirectiveCollapsed, setKeyframeDirectiveCollapsed] = useState(true)
+  const [keyframePromptDecisionCollapsed, setKeyframePromptDecisionCollapsed] = useState(true)
   const [keyframePromptQualityChecks, setKeyframePromptQualityChecks] = useState<ShotFramePromptQualityChecks>(null)
   const [videoPromptPreviewOpen, setVideoPromptPreviewOpen] = useState(false)
   const [videoPromptPreviewLoading, setVideoPromptPreviewLoading] = useState(false)
   const [videoPromptPreviewSubmitting, setVideoPromptPreviewSubmitting] = useState(false)
+  const [videoPromptContextCollapsed, setVideoPromptContextCollapsed] = useState(true)
   const resolveVideoRatioForRequest = useCallback(() => {
     const shotRatio = String(shotDetail?.override_video_ratio ?? '').trim()
     const projectRatio = String(projectDefaultVideoRatio ?? '').trim()
@@ -2992,10 +3072,11 @@ function Inspector(props: {
           ratio,
         } as any,
       })
-      const data = res.data as any
+      const data = (res as any)?.data ?? null
       return {
         prompt: typeof data?.prompt === 'string' ? data.prompt : '',
         images: Array.isArray(data?.images) ? (data.images as string[]).filter(Boolean) : [],
+        pack: data?.pack ?? null,
       }
     },
     submit: async ({ derived, context }) => {
@@ -3023,6 +3104,21 @@ function Inspector(props: {
   const videoPromptPreviewDraft = videoPromptDraft.base.prompt
   const videoPromptPreviewImages = videoPromptDraft.context.images
   const videoReferenceMode = videoPromptDraft.context.referenceMode
+  const videoPromptPreviewPack = videoPromptDraft.derived?.pack ?? null
+  const videoActionBeatPhases = videoPromptPreviewPack?.action_beat_phases ?? []
+  const videoActionBeats = videoActionBeatPhases.length > 0
+    ? videoActionBeatPhases.map((item) => ({
+        text: item.text,
+        phase: item.phase,
+      }))
+    : (videoPromptPreviewPack?.action_beats ?? []).map((text) => ({
+        text,
+        phase: null,
+      }))
+  const videoVisibleActionBeats = videoPromptContextCollapsed
+    ? videoActionBeats.slice(0, 2)
+    : videoActionBeats
+  const hiddenVideoActionBeatCount = Math.max(0, videoActionBeats.length - videoVisibleActionBeats.length)
   const [videoTaskPolling, setVideoTaskPolling] = useState(false)
   const [videoTaskStatus, setVideoTaskStatus] = useState<string | null>(null)
   const [videoTaskId, setVideoTaskId] = useState<string | null>(null)
@@ -3639,6 +3735,10 @@ function Inspector(props: {
         return {
           basePrompt: '',
           renderedPrompt: '',
+          selectedGuidance: [],
+          droppedGuidance: [],
+          selectedGuidanceDetails: [],
+          droppedGuidanceDetails: [],
           images: [],
           mappings: [],
         }
@@ -3672,6 +3772,32 @@ function Inspector(props: {
       return {
         basePrompt: typeof d?.base_prompt === 'string' ? d.base_prompt : basePrompt,
         renderedPrompt: typeof d?.rendered_prompt === 'string' ? d.rendered_prompt : '',
+        selectedGuidance: Array.isArray(d?.selected_guidance)
+          ? d.selected_guidance.map((item: unknown) => String(item ?? '').trim()).filter(Boolean)
+          : [],
+        droppedGuidance: Array.isArray(d?.dropped_guidance)
+          ? d.dropped_guidance.map((item: unknown) => String(item ?? '').trim()).filter(Boolean)
+          : [],
+        selectedGuidanceDetails: Array.isArray(d?.selected_guidance_details)
+          ? d.selected_guidance_details
+            .map((item: any) => ({
+              text: String(item?.text ?? '').trim(),
+              category: String(item?.category ?? '').trim(),
+              reasonTag: String(item?.reason_tag ?? '').trim(),
+              reason: String(item?.reason ?? '').trim(),
+            }))
+            .filter((item: { text: string }) => item.text)
+          : [],
+        droppedGuidanceDetails: Array.isArray(d?.dropped_guidance_details)
+          ? d.dropped_guidance_details
+            .map((item: any) => ({
+              text: String(item?.text ?? '').trim(),
+              category: String(item?.category ?? '').trim(),
+              reasonTag: String(item?.reason_tag ?? '').trim(),
+              reason: String(item?.reason ?? '').trim(),
+            }))
+            .filter((item: { text: string }) => item.text)
+          : [],
         images: Array.isArray(d?.images) ? (d.images as string[]).filter(Boolean) : [],
         mappings: Array.isArray(d?.mappings) ? (d.mappings as ShotFramePromptMappingRead[]) : [],
       }
@@ -3734,6 +3860,16 @@ function Inspector(props: {
   })
   const keyframePromptPreviewDraft = keyframePromptDraft.base.prompt
   const keyframePromptRenderedDraft = keyframePromptDraft.derived?.renderedPrompt ?? ''
+  const keyframePromptSelectedGuidance = keyframePromptDraft.derived?.selectedGuidance ?? []
+  const keyframePromptDroppedGuidance = keyframePromptDraft.derived?.droppedGuidance ?? []
+  const keyframePromptSelectedGuidanceDetails = keyframePromptDraft.derived?.selectedGuidanceDetails ?? []
+  const keyframePromptDroppedGuidanceDetails = keyframePromptDraft.derived?.droppedGuidanceDetails ?? []
+  const keyframePromptVisibleSelectedGuidanceDetails = keyframePromptDecisionCollapsed
+    ? keyframePromptSelectedGuidanceDetails.slice(0, 2)
+    : keyframePromptSelectedGuidanceDetails
+  const keyframePromptVisibleDroppedGuidanceDetails = keyframePromptDecisionCollapsed
+    ? keyframePromptDroppedGuidanceDetails.slice(0, 1)
+    : keyframePromptDroppedGuidanceDetails
   const keyframePromptRenderMappings = keyframePromptDraft.derived?.mappings ?? []
   const keyframePromptPreviewRefFileIds = keyframePromptDraft.context.refFileIds
   const keyframePromptRenderState = keyframePromptDraft.state
@@ -4120,6 +4256,7 @@ function Inspector(props: {
       base: { prompt: '' },
       context: nextContext,
     })
+    setVideoPromptContextCollapsed(true)
     setVideoPromptPreviewOpen(true)
     setVideoPromptPreviewLoading(true)
     try {
@@ -4291,6 +4428,8 @@ function Inspector(props: {
       setKeyframePromptPreviewOpen(true)
       setKeyframePromptPreviewFrameType(frameType)
       setKeyframePromptDebugCollapsed(true)
+      setKeyframeDirectiveCollapsed(true)
+      setKeyframePromptDecisionCollapsed(true)
       const basePrompt = getPromptFromDetailByType(frameType)
       keyframePromptDraft.hydrate({
         base: { frameType, prompt: basePrompt },
@@ -5496,6 +5635,30 @@ function Inspector(props: {
             const debugCostumeContext = readDebugContextText(keyframePromptDebugContext, 'costume_context')
             const debugShotDescription = readDebugContextText(keyframePromptDebugContext, 'shot_description')
             const debugDialogSummary = readDebugContextText(keyframePromptDebugContext, 'dialog_summary')
+            const debugPreviousShotTitle = readDebugContextText(keyframePromptDebugContext, 'previous_shot_title')
+            const debugPreviousShotScriptExcerpt = readDebugContextText(keyframePromptDebugContext, 'previous_shot_script_excerpt')
+            const debugPreviousShotEndState = readDebugContextText(keyframePromptDebugContext, 'previous_shot_end_state')
+            const debugNextShotTitle = readDebugContextText(keyframePromptDebugContext, 'next_shot_title')
+            const debugNextShotScriptExcerpt = readDebugContextText(keyframePromptDebugContext, 'next_shot_script_excerpt')
+            const debugNextShotStartGoal = readDebugContextText(keyframePromptDebugContext, 'next_shot_start_goal')
+            const debugContinuityGuidance = readDebugContextText(keyframePromptDebugContext, 'continuity_guidance')
+            const debugCompositionAnchor = readDebugContextText(keyframePromptDebugContext, 'composition_anchor')
+            const debugScreenDirectionGuidance = readDebugContextText(keyframePromptDebugContext, 'screen_direction_guidance')
+            const debugFrameSpecificGuidance = readDebugContextText(keyframePromptDebugContext, 'frame_specific_guidance')
+            const debugDirectorCommandSummary = readDebugContextText(keyframePromptDebugContext, 'director_command_summary')
+            const debugActionBeatPhases = readDebugContextText(keyframePromptDebugContext, 'action_beat_phases')
+            const debugSelectedActionBeatPhase = readDebugContextText(keyframePromptDebugContext, 'selected_action_beat_phase')
+            const debugSelectedActionBeatText = readDebugContextText(keyframePromptDebugContext, 'selected_action_beat_text')
+            const actionBeatPhaseTags = buildActionBeatPhaseTags(debugActionBeatPhases)
+            const parsedDirectorCommandSummary = parseDirectorCommandSummary(debugDirectorCommandSummary)
+            const keyframeGuidanceSummary = buildKeyframeGuidanceSummary([
+              debugDirectorCommandSummary,
+              debugFrameSpecificGuidance,
+              debugContinuityGuidance,
+              debugCompositionAnchor,
+              debugScreenDirectionGuidance,
+            ])
+            const guidanceLevelSummary = buildGuidanceLevelSummary(parsedDirectorCommandSummary, keyframeGuidanceSummary)
             const debugUnifyStyle =
               typeof keyframePromptDebugContext?.unify_style === 'boolean'
                 ? (keyframePromptDebugContext.unify_style ? '是' : '否')
@@ -5509,6 +5672,19 @@ function Inspector(props: {
                 debugCostumeContext ||
                 debugShotDescription ||
                 debugDialogSummary ||
+                debugPreviousShotTitle ||
+                debugPreviousShotScriptExcerpt ||
+                debugPreviousShotEndState ||
+                debugNextShotTitle ||
+                debugNextShotScriptExcerpt ||
+                debugNextShotStartGoal ||
+                debugContinuityGuidance ||
+                debugCompositionAnchor ||
+                debugScreenDirectionGuidance ||
+                debugFrameSpecificGuidance ||
+                debugDirectorCommandSummary ||
+                debugActionBeatPhases ||
+                debugSelectedActionBeatText ||
                 debugUnifyStyle,
             )
             const hasPromptQualityChecks = keyframePromptQualityChecks !== null
@@ -5636,6 +5812,116 @@ function Inspector(props: {
                     placeholder="请输入基础提示词，例如人物动作、场景氛围、镜头视角等…"
                     disabled={keyframePromptActionLoading || shotRenderPromptLoading}
                   />
+                  {keyframeGuidanceSummary.length > 0 || debugDirectorCommandSummary ? (
+                    <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-3 text-xs text-sky-800">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium">基础提示词生成依据</div>
+                          <div className="mt-1 text-sky-700">
+                            这些导演约束主要用于生成上游基础提示词，默认先看摘要；只有少量高优先级规则会再进入最终图片提示词。
+                          </div>
+                        </div>
+                        <Button size="small" type="text" onClick={() => setKeyframeDirectiveCollapsed((prev) => !prev)}>
+                          {keyframeDirectiveCollapsed ? '展开细节' : '收起细节'}
+                        </Button>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Tag color="red">{`必须 ${guidanceLevelSummary.must}`}</Tag>
+                        <Tag color="blue">{`优先 ${guidanceLevelSummary.prefer}`}</Tag>
+                        <Tag>{`普通 ${guidanceLevelSummary.normal}`}</Tag>
+                        {actionBeatPhaseTags.length > 0 ? (
+                          <Tag color="purple">{`动作阶段 ${actionBeatPhaseTags.length}`}</Tag>
+                        ) : null}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {(keyframeDirectiveCollapsed
+                          ? (
+                            parsedDirectorCommandSummary.length > 0
+                              ? parsedDirectorCommandSummary
+                                  .slice(0, 2)
+                                  .map((item) => `${item.level === 'must' ? '必须' : '优先'} · ${item.text}`)
+                              : keyframeGuidanceSummary.slice(0, 2)
+                          )
+                          : keyframeGuidanceSummary
+                        ).map((item) => (
+                          <Tooltip key={item} title={item}>
+                            <Tag color="blue" className="max-w-[240px] overflow-hidden">
+                              <span className="inline-block max-w-[200px] truncate align-bottom">{item}</span>
+                            </Tag>
+                          </Tooltip>
+                        ))}
+                      </div>
+                      {actionBeatPhaseTags.length > 0 ? (
+                        <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-3 text-xs text-slate-700">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="font-medium text-slate-800">当前帧消费的动作阶段</div>
+                            {debugSelectedActionBeatPhase && debugSelectedActionBeatText ? (
+                              <Tag color="purple">
+                                {`${debugSelectedActionBeatPhase} · ${debugSelectedActionBeatText}`}
+                              </Tag>
+                            ) : null}
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {actionBeatPhaseTags.map((item, index) => (
+                              <Tooltip key={`${item.phaseLabel}:${index}:${item.text}`} title={`${item.phaseLabel} · ${item.text}`}>
+                                <Tag
+                                  color={
+                                    item.phaseLabel === '触发'
+                                      ? 'gold'
+                                      : item.phaseLabel === '峰值'
+                                        ? 'blue'
+                                        : 'green'
+                                  }
+                                  className="max-w-[240px] overflow-hidden"
+                                >
+                                  <span className="inline-block max-w-[200px] truncate align-bottom">
+                                    {item.phaseLabel} · {item.text}
+                                  </span>
+                                </Tag>
+                              </Tooltip>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {!keyframeDirectiveCollapsed ? (
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          {debugDirectorCommandSummary ? (
+                            <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-3 text-xs text-indigo-800">
+                              <div className="font-medium">高优先级导演指令</div>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {parsedDirectorCommandSummary.map((item, index) => (
+                                  <Tooltip key={`${item.level}:${index}:${item.text}`} title={`${item.level === 'must' ? '必须' : '优先'} · ${item.text}`}>
+                                    <Tag
+                                      color={item.level === 'must' ? 'red' : 'blue'}
+                                      className="max-w-[240px] overflow-hidden"
+                                    >
+                                      <span className="inline-block max-w-[200px] truncate align-bottom">
+                                        {item.level === 'must' ? '必须' : '优先'} · {item.text}
+                                      </span>
+                                    </Tag>
+                                  </Tooltip>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {keyframeGuidanceSummary.length > 0 ? (
+                            <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-xs text-blue-800">
+                              <div className="font-medium">补充 Guidance</div>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {keyframeGuidanceSummary.map((item) => (
+                                  <Tooltip key={item} title={item}>
+                                    <Tag color="blue" className="max-w-[220px] overflow-hidden">
+                                      <span className="inline-block max-w-[180px] truncate align-bottom">{item}</span>
+                                    </Tag>
+                                  </Tooltip>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {hasPromptDebugContext ? (
                     <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
                       <div className="flex items-center justify-between gap-3">
@@ -5647,13 +5933,13 @@ function Inspector(props: {
                             type="text"
                             onClick={() => setKeyframePromptDebugCollapsed((prev) => !prev)}
                           >
-                            {keyframePromptDebugCollapsed ? '展开' : '收起'}
+                            {keyframePromptDebugCollapsed ? '展开细节' : '收起细节'}
                           </Button>
                         </Space>
                       </div>
                       {keyframePromptDebugCollapsed ? (
                         <div className="mt-2 text-slate-500">
-                          调试信息默认收起，展开后可查看最近一次 AI 生成使用的项目风格、镜头描述与实体上下文。
+                          调试信息默认收起，展开后可查看最近一次 AI 生成使用的项目风格、镜头描述、连续性约束与实体上下文。
                         </div>
                       ) : (
                         <div className="mt-2 grid gap-2 md:grid-cols-2">
@@ -5677,6 +5963,84 @@ function Inspector(props: {
                             <div className="md:col-span-2">
                               <div className="text-slate-500">对白摘要</div>
                               <div className="mt-1 whitespace-pre-wrap text-slate-700">{debugDialogSummary}</div>
+                            </div>
+                          ) : null}
+                          {debugActionBeatPhases ? (
+                            <div className="md:col-span-2">
+                              <div className="text-slate-500">动作拍点阶段</div>
+                              <div className="mt-1 flex flex-wrap gap-2">
+                                {actionBeatPhaseTags.map((item, index) => (
+                                  <Tag
+                                    key={`debug-action-phase:${index}:${item.text}`}
+                                    color={
+                                      item.phaseLabel === '触发'
+                                        ? 'gold'
+                                        : item.phaseLabel === '峰值'
+                                          ? 'blue'
+                                          : 'green'
+                                    }
+                                  >
+                                    {`${item.phaseLabel} · ${item.text}`}
+                                  </Tag>
+                                ))}
+                              </div>
+                              {debugSelectedActionBeatPhase || debugSelectedActionBeatText ? (
+                                <div className="mt-2 text-slate-700">
+                                  {`当前帧优先消费：${[debugSelectedActionBeatPhase, debugSelectedActionBeatText].filter(Boolean).join(' · ')}`}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {debugPreviousShotTitle || debugPreviousShotScriptExcerpt || debugPreviousShotEndState ? (
+                            <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white px-3 py-3">
+                              <div className="text-slate-500">上一镜头承接</div>
+                              <div className="mt-1 space-y-1 text-slate-700">
+                                {debugPreviousShotTitle ? <div>标题：{debugPreviousShotTitle}</div> : null}
+                                {debugPreviousShotScriptExcerpt ? (
+                                  <div className="whitespace-pre-wrap">摘录：{debugPreviousShotScriptExcerpt}</div>
+                                ) : null}
+                                {debugPreviousShotEndState ? (
+                                  <div className="whitespace-pre-wrap">结尾状态：{debugPreviousShotEndState}</div>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : null}
+                          {debugNextShotTitle || debugNextShotScriptExcerpt || debugNextShotStartGoal ? (
+                            <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white px-3 py-3">
+                              <div className="text-slate-500">下一镜头衔接</div>
+                              <div className="mt-1 space-y-1 text-slate-700">
+                                {debugNextShotTitle ? <div>标题：{debugNextShotTitle}</div> : null}
+                                {debugNextShotScriptExcerpt ? (
+                                  <div className="whitespace-pre-wrap">摘录：{debugNextShotScriptExcerpt}</div>
+                                ) : null}
+                                {debugNextShotStartGoal ? (
+                                  <div className="whitespace-pre-wrap">起始目标：{debugNextShotStartGoal}</div>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : null}
+                          {debugContinuityGuidance ? (
+                            <div className="md:col-span-2">
+                              <div className="text-slate-500">连续性建议</div>
+                              <div className="mt-1 whitespace-pre-wrap text-slate-700">{debugContinuityGuidance}</div>
+                            </div>
+                          ) : null}
+                          {debugCompositionAnchor ? (
+                            <div className="md:col-span-2">
+                              <div className="text-slate-500">构图与空间锚点</div>
+                              <div className="mt-1 whitespace-pre-wrap text-slate-700">{debugCompositionAnchor}</div>
+                            </div>
+                          ) : null}
+                          {debugScreenDirectionGuidance ? (
+                            <div className="md:col-span-2">
+                              <div className="text-slate-500">朝向与视线建议</div>
+                              <div className="mt-1 whitespace-pre-wrap text-slate-700">{debugScreenDirectionGuidance}</div>
+                            </div>
+                          ) : null}
+                          {debugFrameSpecificGuidance ? (
+                            <div className="md:col-span-2">
+                              <div className="text-slate-500">当前帧专项建议</div>
+                              <div className="mt-1 whitespace-pre-wrap text-slate-700">{debugFrameSpecificGuidance}</div>
                             </div>
                           ) : null}
                           {debugCharacterContext ? (
@@ -5778,6 +6142,100 @@ function Inspector(props: {
                       ))}
                     </div>
                   ) : null}
+                  {keyframePromptSelectedGuidance.length > 0 || keyframePromptDroppedGuidance.length > 0 ? (
+                    <div className="mb-3 rounded-lg border border-slate-200 bg-white px-3 py-3 text-xs text-slate-700">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-slate-900">最终图片提示词收敛结果</div>
+                          <div className="mt-1 text-slate-500">
+                            系统会从上游导演约束里挑出最关键的少量规则，补进最终图片提示词。
+                          </div>
+                        </div>
+                        <Space size="small" wrap>
+                          <Tag color="green">{`保留 ${keyframePromptSelectedGuidance.length}`}</Tag>
+                          <Tag color="gold">{`压缩 ${keyframePromptDroppedGuidance.length}`}</Tag>
+                          {(keyframePromptSelectedGuidance.length > 2 || keyframePromptDroppedGuidance.length > 0) ? (
+                            <Button
+                              size="small"
+                              type="text"
+                              onClick={() => setKeyframePromptDecisionCollapsed((prev) => !prev)}
+                            >
+                              {keyframePromptDecisionCollapsed ? '查看取舍' : '收起取舍'}
+                            </Button>
+                          ) : null}
+                        </Space>
+                      </div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-xs text-emerald-800">
+                          <div className="font-medium">实际保留的 Guidance</div>
+                          {keyframePromptSelectedGuidance.length > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {keyframePromptVisibleSelectedGuidanceDetails.map((item) => (
+                                <Tooltip
+                                  key={`selected:${item.text}`}
+                                  title={(
+                                    <div className="max-w-[320px] text-xs leading-5">
+                                      {item.reasonTag ? (
+                                        <Tag color="green" className="mb-1">
+                                          {item.reasonTag}
+                                        </Tag>
+                                      ) : null}
+                                      <div>{item.text}</div>
+                                      {item.reason ? <div className="mt-1 text-slate-500">{item.reason}</div> : null}
+                                    </div>
+                                  )}
+                                >
+                                  <Tag color="green" className="max-w-[240px] overflow-hidden">
+                                    <span className="inline-block max-w-[200px] truncate align-bottom">{item.text}</span>
+                                  </Tag>
+                                </Tooltip>
+                              ))}
+                              {keyframePromptDecisionCollapsed && keyframePromptSelectedGuidanceDetails.length > 2 ? (
+                                <Tag>{`+${keyframePromptSelectedGuidanceDetails.length - 2} 条`}</Tag>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <div className="mt-2 text-emerald-700">当前没有额外 guidance 被保留。</div>
+                          )}
+                        </div>
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-800">
+                          <div className="font-medium">已压缩的 Guidance</div>
+                          {keyframePromptDroppedGuidance.length > 0 ? (
+                            keyframePromptDecisionCollapsed ? (
+                              <div className="mt-2 text-amber-700">
+                                当前有 {keyframePromptDroppedGuidance.length} 条 guidance 被压缩，展开后可查看具体取舍原因。
+                              </div>
+                            ) : (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {keyframePromptVisibleDroppedGuidanceDetails.map((item) => (
+                                  <Tooltip
+                                    key={`dropped:${item.text}`}
+                                    title={(
+                                      <div className="max-w-[320px] text-xs leading-5">
+                                        {item.reasonTag ? (
+                                          <Tag color="gold" className="mb-1">
+                                            {item.reasonTag}
+                                          </Tag>
+                                        ) : null}
+                                        <div>{item.text}</div>
+                                        {item.reason ? <div className="mt-1 text-slate-500">{item.reason}</div> : null}
+                                      </div>
+                                    )}
+                                  >
+                                    <Tag color="gold" className="max-w-[240px] overflow-hidden">
+                                      <span className="inline-block max-w-[200px] truncate align-bottom">{item.text}</span>
+                                    </Tag>
+                                  </Tooltip>
+                                ))}
+                              </div>
+                            )
+                          ) : (
+                            <div className="mt-2 text-amber-700">当前没有 guidance 被压缩。</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   {hasBasePrompt ? (
                     <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm leading-6 text-slate-800 whitespace-pre-wrap min-h-[220px]">
                       {keyframePromptRenderedDraft || '系统正在根据当前内容准备最终提示词…'}
@@ -5821,6 +6279,102 @@ function Inspector(props: {
             </div>
           ) : (
             <div className="space-y-3">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium text-slate-700">镜头连续性上下文</div>
+                    <div className="mt-1 text-[11px] leading-5 text-slate-500">
+                      这些上下文会参与视频模板渲染和最终提示词补强，默认先展示摘要，需要时再展开细节。
+                    </div>
+                  </div>
+                  <Button
+                    type="link"
+                    size="small"
+                    className="px-0"
+                    onClick={() => setVideoPromptContextCollapsed((prev) => !prev)}
+                  >
+                    {videoPromptContextCollapsed ? '展开细节' : '收起细节'}
+                  </Button>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Tag color="blue">{`动作节拍 ${videoActionBeats.length}`}</Tag>
+                  {videoPromptPreviewPack?.previous_shot_summary ? (
+                    <Tag color="purple">上一镜头</Tag>
+                  ) : null}
+                  {videoPromptPreviewPack?.next_shot_goal ? (
+                    <Tag color="cyan">下一镜头</Tag>
+                  ) : null}
+                  {videoPromptPreviewPack?.continuity_guidance ? (
+                    <Tag color="gold">连续性</Tag>
+                  ) : null}
+                </div>
+                <div className="mt-3 space-y-3">
+                  <div>
+                    <div className="text-slate-500">动作节拍</div>
+                    {videoVisibleActionBeats.length > 0 ? (
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {videoVisibleActionBeats.map((item, index) => (
+                          <Tag
+                            key={`${index}:${item.phase ?? 'raw'}:${item.text}`}
+                            color={
+                              item.phase === 'trigger'
+                                ? 'gold'
+                                : item.phase === 'peak'
+                                  ? 'blue'
+                                  : item.phase === 'aftermath'
+                                    ? 'green'
+                                    : 'default'
+                            }
+                          >
+                            {item.phase
+                              ? `${item.phase === 'trigger' ? '触发' : item.phase === 'peak' ? '峰值' : '收束'} · ${item.text}`
+                              : item.text}
+                          </Tag>
+                        ))}
+                        {videoPromptContextCollapsed && hiddenVideoActionBeatCount > 0 ? (
+                          <Tag>{`+${hiddenVideoActionBeatCount}`}</Tag>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-gray-400">暂无动作节拍</div>
+                    )}
+                  </div>
+                  {!videoPromptContextCollapsed ? (
+                    <>
+                      <div>
+                        <div className="text-slate-500">上一镜头摘要</div>
+                        <div className="mt-1 whitespace-pre-wrap text-slate-700">
+                          {videoPromptPreviewPack?.previous_shot_summary || '无'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500">下一镜头目标</div>
+                        <div className="mt-1 whitespace-pre-wrap text-slate-700">
+                          {videoPromptPreviewPack?.next_shot_goal || '无'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500">连续性建议</div>
+                        <div className="mt-1 whitespace-pre-wrap text-slate-700">
+                          {videoPromptPreviewPack?.continuity_guidance || '无'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500">构图与空间锚点</div>
+                        <div className="mt-1 whitespace-pre-wrap text-slate-700">
+                          {videoPromptPreviewPack?.composition_anchor || '无'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500">朝向与视线建议</div>
+                        <div className="mt-1 whitespace-pre-wrap text-slate-700">
+                          {videoPromptPreviewPack?.screen_direction_guidance || '无'}
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </div>
               <div>
                 <div className="text-xs text-gray-500 mb-2">关联图片（参考图）</div>
                 {videoPromptPreviewImages.length === 0 ? (

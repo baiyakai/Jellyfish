@@ -125,6 +125,16 @@ def test_create_shot_frame_image_task_requires_prompt(client: TestClient) -> Non
 
 def test_render_shot_frame_prompt_returns_success_envelope_when_prompt_given(client: TestClient, monkeypatch) -> None:
     db = _DummyDB()
+    async def _fake_load_frame_render_guidance(**_kwargs):
+        return {
+            "director_command_summary": "必须：锁定主角视线方向",
+            "continuity_guidance": "当前镜头应承接上一镜头的动作与情绪，不要像全新场面重新开局",
+            "frame_specific_guidance": "首帧只表现惊响出现后的最初僵直反应，人物尚未完成捂耳和下蹲动作",
+            "composition_anchor": "以温室门框和人物站位作为空间锚点，保持环境与人物同时可读",
+            "screen_direction_guidance": "保持陆远与环境入口的视线方向稳定，避免无故翻转朝向",
+        }
+
+    monkeypatch.setattr(route, "_load_frame_render_guidance", _fake_load_frame_render_guidance)
     app.dependency_overrides[get_db] = _override_db(db)
     try:
         response = client.post(
@@ -146,11 +156,29 @@ def test_render_shot_frame_prompt_returns_success_envelope_when_prompt_given(cli
     assert body["code"] == 200
     assert body["message"] == "success"
     assert body["data"]["base_prompt"] == "生成一个紧张的首帧画面"
+    assert body["data"]["selected_guidance"] == [
+        "高优先级导演指令：必须：锁定主角视线方向",
+        "当前帧职责：首帧只表现惊响出现后的最初僵直反应，人物尚未完成捂耳和下蹲动作",
+        "连续性要求：当前镜头应承接上一镜头的动作与情绪，不要像全新场面重新开局",
+    ]
+    assert body["data"]["dropped_guidance"] == [
+        "构图锚点：以温室门框和人物站位作为空间锚点，保持环境与人物同时可读",
+        "朝向与视线：保持陆远与环境入口的视线方向稳定，避免无故翻转朝向",
+    ]
+    assert body["data"]["selected_guidance_details"][1]["reason_tag"] == "首帧保时序"
+    assert body["data"]["selected_guidance_details"][1]["reason"] == "当前是首帧，系统优先保留触发瞬间与未完成态约束，避免画面直接跳到后续完成动作。"
+    assert body["data"]["dropped_guidance_details"][0]["reason_tag"] == "首帧降构图"
+    assert body["data"]["dropped_guidance_details"][1]["reason_tag"] == "首帧降轴线"
     assert body["data"]["images"] == ["file-1", "file-2"]
     assert body["data"]["mappings"] == [
         {"token": "图1", "type": "character", "id": "char-1", "name": "陆远", "file_id": "file-1"},
         {"token": "图2", "type": "scene", "id": "scene-1", "name": "温室", "file_id": "file-2"},
     ]
+    assert "高优先级导演指令：必须：锁定主角视线方向" in body["data"]["rendered_prompt"]
+    assert "当前帧职责：首帧只表现惊响出现后的最初僵直反应，人物尚未完成捂耳和下蹲动作" in body["data"]["rendered_prompt"]
+    assert "连续性要求：当前镜头应承接上一镜头的动作与情绪，不要像全新场面重新开局" in body["data"]["rendered_prompt"]
+    assert "构图锚点：以温室门框和人物站位作为空间锚点，保持环境与人物同时可读" not in body["data"]["rendered_prompt"]
+    assert "朝向与视线：保持陆远与环境入口的视线方向稳定，避免无故翻转朝向" not in body["data"]["rendered_prompt"]
     assert "图1: 陆远" in body["data"]["rendered_prompt"]
     assert "图2: 温室" in body["data"]["rendered_prompt"]
     assert "生成一个紧张的首帧画面" in body["data"]["rendered_prompt"]
@@ -186,8 +214,22 @@ def test_create_shot_frame_image_task_renders_prompt_before_submit(client: TestC
     async def _fake_resolve_image_refs(*_args, **_kwargs):
         return [{"image_url": "data:image/png;base64,abc"}]
 
+    async def _fake_load_frame_render_guidance(**_kwargs):
+        return {
+            "director_command_summary": "必须：锁定主角视线方向",
+            "continuity_guidance": "当前镜头应承接上一镜头的动作与情绪，不要像全新场面重新开局",
+            "frame_specific_guidance": "首帧只表现惊响出现后的最初僵直反应，人物尚未完成捂耳和下蹲动作",
+            "composition_anchor": "以温室门框和人物站位作为空间锚点，保持环境与人物同时可读",
+            "screen_direction_guidance": "保持陆远与环境入口的视线方向稳定，避免无故翻转朝向",
+        }
+
     async def _fake_create_image_task_and_link(*_args, **kwargs):
         assert kwargs["prompt"].startswith("## 图片内容说明")
+        assert "高优先级导演指令：必须：锁定主角视线方向" in kwargs["prompt"]
+        assert "当前帧职责：首帧只表现惊响出现后的最初僵直反应，人物尚未完成捂耳和下蹲动作" in kwargs["prompt"]
+        assert "连续性要求：当前镜头应承接上一镜头的动作与情绪，不要像全新场面重新开局" in kwargs["prompt"]
+        assert "构图锚点：以温室门框和人物站位作为空间锚点，保持环境与人物同时可读" not in kwargs["prompt"]
+        assert "朝向与视线：保持陆远与环境入口的视线方向稳定，避免无故翻转朝向" not in kwargs["prompt"]
         assert "图1: 陆远" in kwargs["prompt"]
         assert kwargs["images"] == [{"image_url": "data:image/png;base64,abc"}]
         assert kwargs["target_ratio"] == "9:16"
@@ -195,9 +237,14 @@ def test_create_shot_frame_image_task_renders_prompt_before_submit(client: TestC
         assert kwargs["purpose"] == "video_reference"
         assert kwargs["render_context"]["images"] == ["file-1"]
         assert kwargs["render_context"]["mappings"][0]["token"] == "图1"
+        assert kwargs["render_context"]["selected_guidance"][0] == "高优先级导演指令：必须：锁定主角视线方向"
+        assert kwargs["render_context"]["selected_guidance_details"][1]["reason_tag"] == "首帧保时序"
+        assert kwargs["render_context"]["dropped_guidance_details"][0]["reason_tag"] == "首帧降构图"
+        assert kwargs["render_context"]["dropped_guidance_details"][1]["reason_tag"] == "首帧降轴线"
         return "task-1"
 
     monkeypatch.setattr(route, "_resolve_reference_image_refs_by_file_ids_service", _fake_resolve_image_refs)
+    monkeypatch.setattr(route, "_load_frame_render_guidance", _fake_load_frame_render_guidance)
     monkeypatch.setattr(route, "_create_image_task_and_link_service", _fake_create_image_task_and_link)
     app.dependency_overrides[get_db] = _override_db(db)
     try:
@@ -298,6 +345,24 @@ def test_run_image_generation_task_persists_render_context(monkeypatch) -> None:
                 "render_context": {
                     "images": ["file-1"],
                     "mappings": [{"token": "图1", "name": "陆远", "file_id": "file-1"}],
+                    "selected_guidance": ["高优先级导演指令：必须：锁定主角视线方向"],
+                    "dropped_guidance": ["朝向与视线：保持陆远与环境入口的视线方向稳定，避免无故翻转朝向"],
+                    "selected_guidance_details": [
+                        {
+                            "text": "高优先级导演指令：必须：锁定主角视线方向",
+                            "category": "summary",
+                            "reason_tag": "导演主指令",
+                            "reason": "导演主指令始终属于最高优先级约束，因此会优先保留。",
+                        }
+                    ],
+                    "dropped_guidance_details": [
+                        {
+                            "text": "朝向与视线：保持陆远与环境入口的视线方向稳定，避免无故翻转朝向",
+                            "category": "screen",
+                            "reason_tag": "首帧降轴线",
+                            "reason": "当前是首帧，系统更优先保空间建立与站位关系，因此将朝向与视线 guidance 降为次级。",
+                        }
+                    ],
                 },
                 "input": {"prompt": "## 图片内容说明\n图1: 陆远", "model": "gpt-image-1"},
             },
@@ -305,3 +370,5 @@ def test_run_image_generation_task_persists_render_context(monkeypatch) -> None:
     )
 
     assert calls["result_payload"]["render_context"]["images"] == ["file-1"]
+    assert calls["result_payload"]["render_context"]["selected_guidance_details"][0]["reason_tag"] == "导演主指令"
+    assert calls["result_payload"]["render_context"]["dropped_guidance_details"][0]["reason_tag"] == "首帧降轴线"

@@ -139,6 +139,7 @@ class ShotDetailBase(BaseModel):
     has_bgm: bool = Field(False, description="是否包含 BGM")
     vfx_type: VFXType = Field(VFXType.none, description="视效类型")
     vfx_note: str = Field("", description="视效说明")
+    action_beats: list[str] = Field(default_factory=list, description="动作拍点（按时间顺序排列）")
     first_frame_prompt: str = Field(
         "",
         description="镜头分镜首帧提示词",
@@ -170,6 +171,7 @@ class ShotDetailUpdate(BaseModel):
     has_bgm: bool | None = None
     vfx_type: VFXType | None = None
     vfx_note: str | None = None
+    action_beats: list[str] | None = None
     first_frame_prompt: str | None = None
     last_frame_prompt: str | None = None
     key_frame_prompt: str | None = None
@@ -319,11 +321,24 @@ class ShotFramePromptMappingRead(BaseModel):
     file_id: str = Field(..., description="本次渲染与生成使用的文件 ID")
 
 
+class FrameGuidanceDecisionRead(BaseModel):
+    """分镜帧 guidance 的保留/压缩决策结果。"""
+
+    text: str = Field(..., description="guidance 原文")
+    category: str = Field(..., description="guidance 分类，如 summary / continuity / composition / screen")
+    reason_tag: str = Field("", description="简短原因标签，如 首帧保空间 / 关键帧保轴线")
+    reason: str = Field(..., description="该 guidance 被保留或压缩的原因说明")
+
+
 class RenderedShotFramePromptRead(BaseModel):
     """关键帧最终生成提示词渲染结果。"""
 
     base_prompt: str = Field(..., description="原始基础提示词（不含图片映射说明）")
     rendered_prompt: str = Field(..., description="最终提交给模型的提示词（含图片映射说明）")
+    selected_guidance: list[str] = Field(default_factory=list, description="最终 prompt 实际保留的 guidance 列表")
+    dropped_guidance: list[str] = Field(default_factory=list, description="本次渲染中被压缩掉的 guidance 列表")
+    selected_guidance_details: list[FrameGuidanceDecisionRead] = Field(default_factory=list, description="最终保留 guidance 的决策详情")
+    dropped_guidance_details: list[FrameGuidanceDecisionRead] = Field(default_factory=list, description="被压缩 guidance 的决策详情")
     images: list[str] = Field(default_factory=list, description="最终参考图 file_id 列表，顺序与 mappings 一致")
     mappings: list[ShotFramePromptMappingRead] = Field(
         default_factory=list,
@@ -382,6 +397,13 @@ class ShotPreparationLinkRequest(BaseModel):
     linked_entity_id: str = Field(..., description="要关联的实体 ID")
 
 
+class ActionBeatPhaseRead(BaseModel):
+    """动作拍点的轻量阶段推断结果。"""
+
+    text: str = Field(..., description="动作拍点原文")
+    phase: Literal["trigger", "peak", "aftermath"] = Field(..., description="推断阶段：触发 / 峰值 / 收束")
+
+
 class ShotPreparationStateRead(BaseModel):
     """分镜准备页聚合状态。"""
 
@@ -396,6 +418,11 @@ class ShotPreparationStateRead(BaseModel):
         description="当前已保存的对白行",
     )
     pending_confirm_count: int = Field(..., description="当前仍待确认的总数量（资产 + 对白）")
+    basic_info_ready: bool = Field(..., description="标题与剧本摘录是否已补齐")
+    semantic_defaults_ready: bool = Field(..., description="镜头语言默认值是否已确认")
+    action_beats_ready: bool = Field(..., description="动作拍点是否已确认")
+    action_beats_count: int = Field(0, description="当前已确认动作拍点数量")
+    action_beat_phases: list[ActionBeatPhaseRead] = Field(default_factory=list, description="当前动作拍点的阶段推断结果")
     ready_for_generation: bool = Field(..., description="当前镜头是否已完成准备，可进入后续生成")
 
 
@@ -441,6 +468,12 @@ class ShotVideoPromptPackRead(BaseModel):
     title: str = Field("", description="镜头标题")
     script_excerpt: str = Field("", description="剧本摘录")
     action_beats: list[str] = Field(default_factory=list, description="动作/场景要点")
+    action_beat_phases: list[ActionBeatPhaseRead] = Field(default_factory=list, description="动作拍点的阶段推断结果")
+    previous_shot_summary: str = Field("", description="上一镜头摘要，用于提示词连续性约束")
+    next_shot_goal: str = Field("", description="下一镜头目标，用于提示词连续性约束")
+    continuity_guidance: str = Field("", description="当前镜头与相邻镜头的承接建议")
+    composition_anchor: str = Field("", description="当前镜头的构图与空间锚点建议")
+    screen_direction_guidance: str = Field("", description="当前镜头的人物朝向、视线与左右轴线建议")
     dialogue_summary: str = Field("", description="对白摘要")
     characters: list[ShotPromptAssetRef] = Field(default_factory=list, description="角色引用")
     scene: ShotPromptAssetRef | None = Field(None, description="场景引用")

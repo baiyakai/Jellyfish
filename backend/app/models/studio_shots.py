@@ -194,6 +194,12 @@ class ShotDetail(Base,TimestampMixin):
         default="",
         comment="分镜整体描述（用于提示词补充）",
     )
+    action_beats: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+        comment="镜头动作拍点（按时间顺序排列，用于关键帧与视频生成）",
+    )
     prompt_template_id: Mapped[str | None] = mapped_column(
         String(64),
         ForeignKey("prompt_templates.id", ondelete="SET NULL"),

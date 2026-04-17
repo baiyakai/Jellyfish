@@ -53,6 +53,18 @@ ChapterStudio
 - 资产候选：关联 / 新建 / 忽略
 - 对白候选：接受 / 忽略 / 批量接受 / 批量忽略
 - 单镜头基础信息修正
+- AI 提取的镜头语言默认值确认
+  - `camera_shot`
+  - `angle`
+  - `movement`
+  - `duration`
+- AI 提取的动作拍点候选确认
+  - `action_beats`
+  - 准备页会同时展示系统当前推断的阶段标签
+    - `trigger`
+    - `peak`
+    - `aftermath`
+  - 用于帮助判断首帧 / 关键帧 / 尾帧后续会如何消费这组动作拍点
 
 ### 这页的目标
 
@@ -60,8 +72,21 @@ ChapterStudio
 
 - 资产候选确认
 - 对白候选确认
+- 镜头语言默认值主确认
+- 动作拍点主确认
 - `skip_extraction` 等准备决策
 - `shot.status = ready`
+
+其中需要特别区分两层语义：
+
+- `shot.status = ready`
+  - 只表示资产 / 对白等信息提取确认已经完成
+- 准备页聚合态里的 `ready_for_generation = true`
+  - 表示当前镜头已经同时补齐：
+    - 标题与剧本摘录
+    - 镜头语言默认值
+    - 动作拍点
+    - 提取确认结果
 
 可以把这页理解成：
 
@@ -81,6 +106,9 @@ ChapterStudio
 - 单镜头视频生成
 - 批量生成前预检
 - 批量生成
+- 镜头语言微调
+  - 允许对 `camera_shot / angle / movement / duration` 做快捷修正
+  - 但仍然写回同一份 `ShotDetail` 真值，而不是任务级临时覆盖
 
 ### 这页的目标
 

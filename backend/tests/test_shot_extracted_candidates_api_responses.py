@@ -11,6 +11,7 @@ from app.dependencies import get_db
 from app.main import app
 from app.models.studio import ShotCandidateStatus, ShotCandidateType, ShotDialogueCandidateStatus, ShotStatus
 from app.schemas.studio.shots import (
+    ActionBeatPhaseRead,
     ShotAssetsOverviewRead,
     ShotAssetsOverviewSummary,
     ShotExtractionSummaryRead,
@@ -69,6 +70,15 @@ def _fake_preparation_state() -> ShotPreparationStateRead:
         dialogue_candidates=[],
         saved_dialogue_lines=[],
         pending_confirm_count=0,
+        basic_info_ready=True,
+        semantic_defaults_ready=True,
+        action_beats_ready=True,
+        action_beats_count=3,
+        action_beat_phases=[
+            ActionBeatPhaseRead(text="听到异响骤然僵住", phase="trigger"),
+            ActionBeatPhaseRead(text="修枝剪脱手下坠", phase="peak"),
+            ActionBeatPhaseRead(text="蹲下后呼吸急促", phase="aftermath"),
+        ],
         ready_for_generation=True,
     )
 
@@ -143,6 +153,9 @@ def test_update_shot_skip_extraction_returns_success_envelope(client: TestClient
     assert body["code"] == 200
     assert body["data"]["action"] == "skip_extraction"
     assert body["data"]["state"]["shot"]["status"] == "ready"
+    assert body["data"]["state"]["action_beats_ready"] is True
+    assert body["data"]["state"]["action_beats_count"] == 3
+    assert body["data"]["state"]["action_beat_phases"][0]["phase"] == "trigger"
     assert body["data"]["state"]["ready_for_generation"] is True
 
 

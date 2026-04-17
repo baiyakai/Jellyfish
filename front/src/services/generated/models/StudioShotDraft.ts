@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ShotSemanticSuggestion } from './ShotSemanticSuggestion';
 import type { StudioShotDraftDialogueLine } from './StudioShotDraftDialogueLine';
 /**
  * 镜头草稿：不含 shot_id，由导入 API 生成；引用实体用 name。
@@ -43,5 +44,9 @@ export type StudioShotDraft = {
      * 动作/场景描述
      */
     actions?: Array<string>;
+    /**
+     * 镜头语言默认建议与动作拍点候选
+     */
+    semantic_suggestion?: (ShotSemanticSuggestion | null);
 };
 

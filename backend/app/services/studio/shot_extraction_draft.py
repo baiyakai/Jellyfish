@@ -33,6 +33,7 @@ from app.models.studio import (
 from app.services.common import entity_not_found
 from app.services.studio.entity_thumbnails import resolve_thumbnail_infos
 from app.schemas.skills.script_processing import (
+    ShotSemanticSuggestion,
     StudioAssetDraft,
     StudioCharacterDraft,
     StudioScriptExtractionDraft,
@@ -364,6 +365,14 @@ async def build_script_extraction_draft_for_shot(db: AsyncSession, shot_id: str)
         costume_names=costume_names_shot,
         dialogue_lines=dialogue_lines,
         actions=actions,
+        semantic_suggestion=ShotSemanticSuggestion(
+            camera_shot=getattr(detail, "camera_shot", None) if detail is not None else None,
+            angle=getattr(detail, "angle", None) if detail is not None else None,
+            movement=getattr(detail, "movement", None) if detail is not None else None,
+            duration=getattr(detail, "duration", None) if detail is not None else None,
+            action_beats=list(getattr(detail, "action_beats", []) or []) if detail is not None else [],
+            notes=None,
+        ),
     )
 
     return StudioScriptExtractionDraft(

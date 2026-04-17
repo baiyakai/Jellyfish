@@ -10,6 +10,7 @@ from app.services.studio.shot_video_prompt_pack import (
     _render_template,
     _resolve_video_prompt_template,
     build_shot_video_prompt_pack,
+    enrich_rendered_video_prompt,
 )
 
 
@@ -34,10 +35,14 @@ async def derive_video_preview(
 ) -> VideoDerivedPreview:
     pack = await build_shot_video_prompt_pack(db, shot_id=base.shot_id)
     if base.prompt:
+        rendered_prompt = enrich_rendered_video_prompt(
+            rendered_prompt=base.prompt,
+            pack=pack,
+        )
         return VideoDerivedPreview(
             shot_id=base.shot_id,
             reference_mode=context.reference_mode,
-            rendered_prompt=base.prompt,
+            rendered_prompt=rendered_prompt,
             images=context.images,
             pack=pack,
             template_id=context.template_id,
@@ -55,6 +60,11 @@ async def derive_video_preview(
         if not rendered_prompt:
             warnings.append("视频提示词模板渲染结果为空，已使用系统默认拼装提示词")
             rendered_prompt = _fallback_video_prompt(pack)
+        else:
+            rendered_prompt = enrich_rendered_video_prompt(
+                rendered_prompt=rendered_prompt,
+                pack=pack,
+            )
 
     return VideoDerivedPreview(
         shot_id=base.shot_id,

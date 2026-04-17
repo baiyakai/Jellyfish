@@ -80,7 +80,7 @@ async def preview_prompt_and_images(
     reference_mode: str,
     prompt: str | None,
     images: list[str] | None = None,
-) -> tuple[str, list[str], ShotDetail]:
+) -> tuple[str, list[str], dict | None]:
     shot_detail = await validate_shot_and_duration(db, shot_id)
     base = build_video_base_draft(shot_id=shot_id, prompt=prompt)
     context = await build_video_context(
@@ -92,7 +92,11 @@ async def preview_prompt_and_images(
     submission = await build_video_submission_payload(db, base=base, context=context)
     if not submission.prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
-    return submission.prompt, submission.images, shot_detail
+    prompt_preview_payload = submission.extra.get("prompt_preview")
+    if isinstance(prompt_preview_payload, dict):
+        pack = prompt_preview_payload.get("pack")
+        return submission.prompt, submission.images, pack if isinstance(pack, dict) else None
+    return submission.prompt, submission.images, None
 
 
 async def resolve_default_video_model(db: AsyncSession) -> Model:

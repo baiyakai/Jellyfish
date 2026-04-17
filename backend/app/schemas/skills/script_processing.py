@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.studio import CameraAngle, CameraMovement, CameraShotType
 from app.schemas.skills.common import DialogueLine, DialogueLineMode, EvidenceSpan
 from app.schemas.skills.film import Character, Location, Prop, Scene, ProjectCinematicBreakdown
 
@@ -320,6 +321,19 @@ class StudioShotDraftDialogueLine(BaseModel):
     target_name: Optional[str] = Field(None, description="听者角色名称（可空）")
 
 
+class ShotSemanticSuggestion(BaseModel):
+    """镜头语义默认建议：用于准备阶段初始化镜头语言与动作拍点。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    camera_shot: Optional[CameraShotType] = Field(None, description="建议景别")
+    angle: Optional[CameraAngle] = Field(None, description="建议机位")
+    movement: Optional[CameraMovement] = Field(None, description="建议运镜")
+    duration: Optional[int] = Field(None, ge=1, description="建议时长（秒）")
+    action_beats: List[str] = Field(default_factory=list, description="按时间顺序排列的动作拍点")
+    notes: Optional[str] = Field(None, description="不确定项说明")
+
+
 class StudioShotDraft(BaseModel):
     """镜头草稿：不含 shot_id，由导入 API 生成；引用实体用 name。"""
 
@@ -336,6 +350,10 @@ class StudioShotDraft(BaseModel):
 
     dialogue_lines: List[StudioShotDraftDialogueLine] = Field(default_factory=list, description="对白列表")
     actions: List[str] = Field(default_factory=list, description="动作/场景描述")
+    semantic_suggestion: Optional[ShotSemanticSuggestion] = Field(
+        None,
+        description="镜头语言默认建议与动作拍点候选",
+    )
 
 
 class StudioScriptExtractionDraft(BaseModel):
@@ -483,4 +501,3 @@ __all__ = [
     "TableData",
     "OutputCompileResult",
 ]
-

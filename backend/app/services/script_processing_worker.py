@@ -39,6 +39,7 @@ from app.services.studio.shot_extracted_candidates import (
 from app.services.studio.shot_extracted_dialogue_candidates import (
     sync_from_extraction_draft_sync as sync_shot_extracted_dialogue_candidates_from_draft_sync,
 )
+from app.services.studio.shot_semantic_defaults import apply_shot_semantic_defaults_from_draft_sync
 from app.services.worker.task_executor import (
     AbstractLLMResultGenerator,
     AbstractWorkerTaskExecutor,
@@ -310,8 +311,11 @@ def apply_extraction_result(
     chapter_id: str,
     draft: Any,
 ) -> None:
+    """将提取草稿同步为候选与镜头语言默认值。"""
+
     sync_shot_extracted_candidates_from_draft_sync(db, chapter_id=chapter_id, draft=draft)
     sync_shot_extracted_dialogue_candidates_from_draft_sync(db, chapter_id=chapter_id, draft=draft)
+    apply_shot_semantic_defaults_from_draft_sync(db, chapter_id=chapter_id, draft=draft)
 
 
 def run_divide_task_sync(task_id: str) -> None:

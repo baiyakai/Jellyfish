@@ -30,6 +30,9 @@ from app.services.film.generated_video import (
 )
 from app.bootstrap import bootstrap_all_registries
 from app.services.llm import resolve_provider_key_from_name
+from app.services.studio.generation.video.derive_preview import derive_video_preview
+from app.services.studio.generation.video.build_base import VideoBaseDraft
+from app.services.studio.generation.video.build_context import VideoGenerationContext
 from app.services.studio import get_shot_video_readiness
 
 
@@ -50,7 +53,17 @@ async def _seed_shot_graph(db: AsyncSession) -> None:
         visual_style=ProjectVisualStyle.live_action,
     )
     chapter = Chapter(id="c1", project_id="p1", index=1, title="第一章")
+    prev_shot = Shot(id="s0", chapter_id="c1", index=0, title="镜头零", script_excerpt="角色沿着墙边逼近门口。")
     shot = Shot(id="s1", chapter_id="c1", index=1, title="镜头一", script_excerpt="角色推门而入。")
+    next_shot = Shot(id="s2", chapter_id="c1", index=2, title="镜头二", script_excerpt="角色停下脚步，盯向走廊尽头。")
+    prev_detail = ShotDetail(
+        id="s0",
+        camera_shot=CameraShotType.ms,
+        angle=CameraAngle.eye_level,
+        movement=CameraMovement.dolly_in,
+        duration=4,
+        description="主角贴墙缓慢逼近门口，视线紧盯前方。",
+    )
     detail = ShotDetail(
         id="s1",
         camera_shot=CameraShotType.ms,
@@ -59,11 +72,20 @@ async def _seed_shot_graph(db: AsyncSession) -> None:
         duration=6,
         follow_atmosphere=True,
         vfx_type=VFXType.none,
+        description="角色推门后微微停顿，确认走廊内部情况，再向前迈出一步。",
         first_frame_prompt="首帧提示词",
         last_frame_prompt="尾帧提示词",
         key_frame_prompt="关键帧提示词",
     )
-    db.add_all([project, chapter, shot, detail])
+    next_detail = ShotDetail(
+        id="s2",
+        camera_shot=CameraShotType.cu,
+        angle=CameraAngle.eye_level,
+        movement=CameraMovement.static,
+        duration=3,
+        description="角色停住动作，盯向走廊尽头，情绪绷紧。",
+    )
+    db.add_all([project, chapter, prev_shot, shot, next_shot, prev_detail, detail, next_detail])
     await db.commit()
 
 
@@ -114,7 +136,7 @@ async def test_preview_prompt_and_images_uses_auto_frame_ids() -> None:
         )
         await db.commit()
 
-        prompt, images, detail = await preview_prompt_and_images(
+        prompt, images, pack = await preview_prompt_and_images(
             db,
             shot_id="s1",
             reference_mode="first_last",
@@ -123,8 +145,17 @@ async def test_preview_prompt_and_images_uses_auto_frame_ids() -> None:
 
         assert "镜头标题：镜头一" in prompt
         assert "剧本摘录：角色推门而入。" in prompt
+        assert "动作节拍：" in prompt
+        assert "上一镜头：" in prompt
+        assert "下一镜头目标：" in prompt
+        assert "构图锚点：" in prompt
+        assert "朝向与视线：" in prompt
         assert images == ["f1", "f2"]
-        assert detail.duration == 6
+        assert pack is not None
+        assert pack["camera"]["duration"] == 6
+        assert pack["action_beats"]
+        assert "镜头零" in pack["previous_shot_summary"]
+        assert "镜头二" in pack["next_shot_goal"]
     await engine.dispose()
 
 
@@ -133,7 +164,7 @@ async def test_preview_prompt_and_images_prefers_request_images_when_provided() 
     db, engine = await _build_session()
     async with db:
         await _seed_shot_graph(db)
-        prompt, images, detail = await preview_prompt_and_images(
+        prompt, images, pack = await preview_prompt_and_images(
             db,
             shot_id="s1",
             reference_mode="first_last",
@@ -141,9 +172,12 @@ async def test_preview_prompt_and_images_prefers_request_images_when_provided() 
             images=["manual-first", "manual-last"],
         )
 
-        assert prompt == "自定义视频提示词"
+        assert "自定义视频提示词" in prompt
+        assert "动作节拍：" in prompt
+        assert "连续性要求：" in prompt
         assert images == ["manual-first", "manual-last"]
-        assert detail.duration == 6
+        assert pack is not None
+        assert pack["camera"]["duration"] == 6
     await engine.dispose()
 
 
@@ -215,8 +249,109 @@ async def test_build_run_args_uses_prompt_pack_when_prompt_missing(monkeypatch: 
         )
 
         assert "镜头标题：镜头一" in run_args["input"]["prompt"]
+        assert "动作节拍：" in run_args["input"]["prompt"]
         assert run_args["input"]["ratio"] == "16:9"
         assert run_args["prompt_preview"]["shot_id"] == "s1"
+        assert run_args["prompt_preview"]["pack"]["action_beats"]
+        assert "镜头零" in run_args["prompt_preview"]["pack"]["previous_shot_summary"]
+        assert "镜头二" in run_args["prompt_preview"]["pack"]["next_shot_goal"]
+        assert run_args["prompt_preview"]["pack"]["composition_anchor"]
+        assert run_args["prompt_preview"]["pack"]["screen_direction_guidance"]
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_template_render_is_enriched_with_guidance_when_template_omits_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    db, engine = await _build_session()
+    async with db:
+        await _seed_shot_graph(db)
+
+        async def _fake_template(*_args, **_kwargs):
+            return type("Template", (), {"id": "tpl-1", "name": "simple", "content": "镜头标题：{{ title }}"})()
+
+        monkeypatch.setattr(
+            "app.services.studio.generation.video.derive_preview._resolve_video_prompt_template",
+            _fake_template,
+        )
+
+        derived = await derive_video_preview(
+            db,
+            base=VideoBaseDraft(shot_id="s1", prompt=""),
+            context=VideoGenerationContext(
+                shot_id="s1",
+                reference_mode="text_only",
+                images=[],
+                template_id=None,
+            ),
+        )
+
+        assert "镜头标题：镜头一" in derived.rendered_prompt
+        assert "动作节拍：" in derived.rendered_prompt
+        assert "连续性要求：" in derived.rendered_prompt
+        assert "构图锚点：" in derived.rendered_prompt
+        assert "朝向与视线：" in derived.rendered_prompt
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_manual_video_prompt_is_also_enriched_with_guidance() -> None:
+    db, engine = await _build_session()
+    async with db:
+        await _seed_shot_graph(db)
+
+        derived = await derive_video_preview(
+            db,
+            base=VideoBaseDraft(shot_id="s1", prompt="手动视频提示词"),
+            context=VideoGenerationContext(
+                shot_id="s1",
+                reference_mode="text_only",
+                images=[],
+                template_id=None,
+            ),
+        )
+
+        assert "手动视频提示词" in derived.rendered_prompt
+        assert "动作节拍：" in derived.rendered_prompt
+        assert "连续性要求：" in derived.rendered_prompt
+        assert "构图锚点：" in derived.rendered_prompt
+        assert "朝向与视线：" in derived.rendered_prompt
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_template_render_keeps_existing_guidance_without_duplicate_suffix(monkeypatch: pytest.MonkeyPatch) -> None:
+    db, engine = await _build_session()
+    async with db:
+        await _seed_shot_graph(db)
+
+        async def _fake_template(*_args, **_kwargs):
+            return type(
+                "Template",
+                (),
+                {
+                    "id": "tpl-2",
+                    "name": "guided",
+                    "content": "镜头标题：{{ title }}\n连续性要求：{{ continuity_guidance }}",
+                },
+            )()
+
+        monkeypatch.setattr(
+            "app.services.studio.generation.video.derive_preview._resolve_video_prompt_template",
+            _fake_template,
+        )
+
+        derived = await derive_video_preview(
+            db,
+            base=VideoBaseDraft(shot_id="s1", prompt=""),
+            context=VideoGenerationContext(
+                shot_id="s1",
+                reference_mode="text_only",
+                images=[],
+                template_id=None,
+            ),
+        )
+
+        assert derived.rendered_prompt.count("连续性要求：") == 1
     await engine.dispose()
 
 

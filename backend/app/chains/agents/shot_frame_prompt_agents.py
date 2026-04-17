@@ -18,6 +18,10 @@ def _prepare_shot_frame_input(input_dict: dict[str, Any]) -> dict[str, Any]:
         out["mood_tags"] = ", ".join(str(t) for t in out["mood_tags"])
     else:
         out.setdefault("mood_tags", "")
+    if "action_beats" in out and isinstance(out["action_beats"], list):
+        out["action_beats"] = "；".join(str(item) for item in out["action_beats"] if str(item).strip())
+    else:
+        out.setdefault("action_beats", "")
     for key in (
         "visual_style",
         "style",
@@ -32,11 +36,26 @@ def _prepare_shot_frame_input(input_dict: dict[str, Any]) -> dict[str, Any]:
         "duration",
         "scene_id",
         "dialog_summary",
+        "action_beats",
+        "action_beat_phases",
+        "selected_action_beat_phase",
+        "selected_action_beat_text",
         "character_context",
         "scene_context",
         "prop_context",
         "costume_context",
         "subject_priority",
+        "previous_shot_title",
+        "previous_shot_script_excerpt",
+        "previous_shot_end_state",
+        "next_shot_title",
+        "next_shot_script_excerpt",
+        "next_shot_start_goal",
+        "continuity_guidance",
+        "composition_anchor",
+        "screen_direction_guidance",
+        "frame_specific_guidance",
+        "director_command_summary",
         "retry_guidance",
     ):
         if key not in out or out[key] is None:
@@ -64,16 +83,31 @@ _SHOT_FRAME_INPUT_VARS = [
     "duration",
     "scene_id",
     "dialog_summary",
+    "action_beats",
+    "action_beat_phases",
+    "selected_action_beat_phase",
+    "selected_action_beat_text",
     "character_context",
     "scene_context",
     "prop_context",
     "costume_context",
     "subject_priority",
+    "previous_shot_title",
+    "previous_shot_script_excerpt",
+    "previous_shot_end_state",
+    "next_shot_title",
+    "next_shot_script_excerpt",
+    "next_shot_start_goal",
+    "continuity_guidance",
+    "composition_anchor",
+    "screen_direction_guidance",
+    "frame_specific_guidance",
+    "director_command_summary",
     "retry_guidance",
 ]
 
 _FRAME_FOCUS = {
-    "首帧": "优先描述镜头开始时最先看到的画面建立信息，强调开场定场、主体初始状态与进入情境的第一印象。",
+    "首帧": "优先描述镜头开始时最先看到的画面建立信息，强调开场定场、主体初始状态与进入情境的第一印象；只表现触发瞬间或最初反应，不要直接写成后续完成动作、最终姿态或情绪爆发完成态。",
     "尾帧": "优先描述镜头结束时最终停留的画面状态，强调动作收束、人物结束姿态、视线落点或情绪余韵。",
     "关键帧": "优先捕捉镜头中最具代表性、最有戏剧张力或信息密度最高的瞬间，不必平均描述整个过程。",
 }
@@ -95,6 +129,15 @@ _SHOT_FRAME_TEMPLATE = """你是一名专业影视分镜提示词设计师，需
 10. 主体优先级建议：{subject_priority}
 11. 不要为了“写全信息”而平均罗列所有角色、道具、服装；优先突出主角色、主场景和主动作，其余元素仅在能强化当前画面时再进入提示词
 12. 如果下面提供了“修正要求”，必须逐条满足后再输出最终结果
+13. 若存在上一镜头信息，当前画面应尽量承接上一镜头的动作、空间方向、视线或情绪，不要像全新场景重新开局
+14. 若存在下一镜头信息，当前画面应为下一镜头留下自然的动作或情绪收束，避免硬切
+15. 尽量明确主体在画面中的相对位置、朝向与动作峰值，减少构图和轴线突变
+16. 若提供了构图与空间锚点建议，应尽量落实到画面描述中，让主体位置、环境重心和空间方向更稳定
+17. 若提供了朝向与视线建议，应保持人物左右关系、视线落点与反打轴线稳定，不要无故翻转
+18. 若提供了当前帧专项建议，应优先满足该建议，确保首帧/关键帧/尾帧各自承担清晰职责
+19. 若提供了导演指令摘要，应将其视为最高优先级的镜头执行约束，优先体现到最终画面描述中
+20. 若当前为首帧，只能表现事件触发瞬间或最初反应，不要直接把后续完成动作、最终姿态或情绪爆发结果写进画面
+21. 若当前为首帧且镜头存在连续动作链，应优先使用“刚开始 / 尚未完成 / 被打断”的未完成态表达，而不是结果态表达
 
 ## 镜头信息
 剧本摘录：{script_excerpt}
@@ -108,12 +151,30 @@ _SHOT_FRAME_TEMPLATE = """你是一名专业影视分镜提示词设计师，需
 视效：{vfx_type} - {vfx_note}
 时长：{duration}秒
 对白摘要：{dialog_summary}
+动作拍点：{action_beats}
+动作拍点阶段：{action_beat_phases}
+当前帧优先消费阶段：{selected_action_beat_phase}
+当前帧主拍点：{selected_action_beat_text}
 
 ## 已确认实体上下文
 角色：{character_context}
 场景：{scene_context}
 道具：{prop_context}
 服装：{costume_context}
+
+## 相邻镜头承接信息
+上一镜头标题：{previous_shot_title}
+上一镜头剧本摘录：{previous_shot_script_excerpt}
+上一镜头结尾状态：{previous_shot_end_state}
+下一镜头标题：{next_shot_title}
+下一镜头剧本摘录：{next_shot_script_excerpt}
+下一镜头起始目标：{next_shot_start_goal}
+连续性建议：{continuity_guidance}
+构图与空间锚点：{composition_anchor}
+朝向与视线建议：{screen_direction_guidance}
+当前帧专项建议：{frame_specific_guidance}
+导演指令摘要：{director_command_summary}
+
 修正要求：{retry_guidance}
 
 ## 输出（仅 {frame_name} 基础提示词，JSON：{{"prompt": "..."}}）

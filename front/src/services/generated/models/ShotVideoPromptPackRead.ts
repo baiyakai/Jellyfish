@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ActionBeatPhaseRead } from './ActionBeatPhaseRead';
 import type { ShotPromptAssetRef } from './ShotPromptAssetRef';
 import type { ShotPromptCameraInfo } from './ShotPromptCameraInfo';
 /**
@@ -24,6 +25,30 @@ export type ShotVideoPromptPackRead = {
      * 动作/场景要点
      */
     action_beats?: Array<string>;
+    /**
+     * 动作拍点的阶段推断结果
+     */
+    action_beat_phases?: Array<ActionBeatPhaseRead>;
+    /**
+     * 上一镜头摘要，用于提示词连续性约束
+     */
+    previous_shot_summary?: string;
+    /**
+     * 下一镜头目标，用于提示词连续性约束
+     */
+    next_shot_goal?: string;
+    /**
+     * 当前镜头与相邻镜头的承接建议
+     */
+    continuity_guidance?: string;
+    /**
+     * 当前镜头的构图与空间锚点建议
+     */
+    composition_anchor?: string;
+    /**
+     * 当前镜头的人物朝向、视线与左右轴线建议
+     */
+    screen_direction_guidance?: string;
     /**
      * 对白摘要
      */

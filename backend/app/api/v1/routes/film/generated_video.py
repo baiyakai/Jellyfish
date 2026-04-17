@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.task_manager import DeliveryMode, SqlAlchemyTaskStore, TaskManager
 from app.dependencies import get_db
 from app.models.task_links import GenerationTaskLink
+from app.schemas.studio.shots import ShotVideoPromptPackRead
 from app.services.film.generated_video import build_run_args, preview_prompt_and_images
 from app.services.studio.shot_status import mark_shot_generating
 from app.tasks.execute_task import enqueue_task_execution
@@ -21,6 +22,7 @@ router = APIRouter()
 class VideoPromptPreviewResponse(BaseModel):
     prompt: str = Field(..., description="最终用于视频生成的提示词")
     images: list[str] = Field(default_factory=list, description="关联参考图 file_id 列表")
+    pack: ShotVideoPromptPackRead | None = Field(None, description="视频提示词预览上下文包")
 
 
 
@@ -35,14 +37,14 @@ async def preview_video_generation_prompt(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[VideoPromptPreviewResponse]:
     """预览视频生成的提示词与自动关联参考图。"""
-    prompt, images, _shot_detail = await preview_prompt_and_images(
+    prompt, images, pack = await preview_prompt_and_images(
         db,
         shot_id=body.shot_id,
         reference_mode=body.reference_mode,
         prompt=body.prompt,
         images=body.images,
     )
-    return success_response(VideoPromptPreviewResponse(prompt=prompt, images=images))
+    return success_response(VideoPromptPreviewResponse(prompt=prompt, images=images, pack=pack))
 
 
 @router.post(

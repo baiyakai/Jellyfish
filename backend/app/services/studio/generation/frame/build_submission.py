@@ -20,6 +20,10 @@ def build_frame_submission_payload(
             "render_context": {
                 "base_prompt": derived.base_prompt,
                 "rendered_prompt": derived.rendered_prompt,
+                "selected_guidance": derived.selected_guidance,
+                "dropped_guidance": derived.dropped_guidance,
+                "selected_guidance_details": [item.model_dump() for item in derived.selected_guidance_details],
+                "dropped_guidance_details": [item.model_dump() for item in derived.dropped_guidance_details],
                 "images": derived.images,
                 "mappings": [mapping.model_dump() for mapping in derived.mappings],
             }
